@@ -118,23 +118,6 @@
   }
   .btn-cancel{background:transparent; color:var(--muted); border:1px solid rgba(255,255,255,.15) !important;}
   .btn-send{background:linear-gradient(90deg,var(--accent),var(--accent2)); color:#1a0f00;}
-  .ticket{
-    display:none;
-    background:var(--card);
-    border-radius:14px;
-    padding:18px;
-    margin-top:16px;
-    border:1px dashed var(--accent);
-    white-space:pre-wrap;
-    font-size:.95rem;
-    line-height:1.5;
-  }
-  .ticket.open{display:block;}
-  .small-actions{display:flex; gap:8px; margin-top:12px;}
-  .small-actions button{
-    flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,.15);
-    background:transparent; color:var(--text); font-weight:600; cursor:pointer;
-  }
   footer{text-align:center; color:var(--muted); padding:30px 0 10px; font-size:1.4rem;}
 </style>
 </head>
@@ -174,13 +157,7 @@
       <button class="btn-send" onclick="sendOrder()">Envoyer 🍹</button>
     </div>
 
-    <div class="ticket" id="ticket"></div>
-    <div class="small-actions" id="ticket-actions" style="display:none;">
-      <button onclick="printOrder()">🖨️ Imprimer au bar</button>
-      <button onclick="sendWhatsapp()">Envoyer par WhatsApp</button>
-      <button onclick="copyOrder()">Copier la commande</button>
-    </div>
-    <div id="print-status" style="text-align:center; margin-top:8px; font-size:.85rem; color:var(--muted);"></div>
+    <div id="print-status" style="text-align:center; margin-top:14px; font-size:.9rem; color:var(--muted);"></div>
   </div>
 </div>
 
@@ -188,14 +165,11 @@
 
 <script>
 // ------- CONFIG -------
-// Numéro WhatsApp du barman, format international sans "+" ni espaces (ex: 33612345678)
-const BARMAN_WHATSAPP = ""; // <-- à compléter si tu veux le bouton WhatsApp actif
-
 // URL du petit serveur relais qui pilote l'imprimante de tickets (voir print-server/).
 // Doit être joignable depuis le téléphone des invités : soit l'IP locale du PC/Raspberry
 // qui héberge print-server.js sur le même WiFi (ex: "http://192.168.1.50:4000/print"),
 // soit une URL publique si tu exposes ce serveur sur internet.
-const PRINT_RELAY_URL = ""; // <-- à compléter pour activer le bouton "Imprimer au bar"
+const PRINT_RELAY_URL = ""; // <-- à compléter pour activer l'impression
 
 const menu = {
   "Grands classiques": [
@@ -278,14 +252,14 @@ function openModal(boisson){
 }
 function closeModal(){
   document.getElementById('overlay').classList.remove('open');
-  document.getElementById('ticket').classList.remove('open');
-  document.getElementById('ticket-actions').style.display = 'none';
+  document.getElementById('print-status').textContent = '';
   document.querySelectorAll('.opt.selected').forEach(o => o.classList.remove('selected'));
 }
 
-function sendOrder(){
+async function sendOrder(){
   const lieu = getSelected('lieu');
   const glacons = getSelected('glacons');
+  const statusEl = document.getElementById('print-status');
 
   if (!currentBoisson || !lieu || !glacons) {
     alert("Choisis un lieu et glaçons ou non 🙏");
@@ -294,53 +268,30 @@ function sendOrder(){
 
   lastOrderText = `🍹 Commande Tikibar\nLieu : ${lieu}\nBoisson : ${currentBoisson}\nGlaçons : ${glacons}`;
 
-  const ticket = document.getElementById('ticket');
-  ticket.textContent = lastOrderText;
-  ticket.classList.add('open');
-  document.getElementById('ticket-actions').style.display = 'flex';
-}
-
-async function printOrder(){
-  const statusEl = document.getElementById('print-status');
-  if (!lastOrderText) return;
   if (!PRINT_RELAY_URL) {
     statusEl.textContent = "Imprimante pas encore configurée (PRINT_RELAY_URL vide).";
     return;
   }
+
   statusEl.textContent = "Envoi à l'imprimante…";
   try {
     const res = await fetch(PRINT_RELAY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        lieu: getSelected('lieu'),
+        lieu,
         boisson: currentBoisson,
-        glacons: getSelected('glacons'),
+        glacons,
         text: lastOrderText,
         ts: new Date().toISOString()
       })
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    statusEl.textContent = "✅ Ticket envoyé à l'imprimante !";
+    statusEl.textContent = "✅ Ton cocktail arrive !";
+    setTimeout(closeModal, 1500);
   } catch (err) {
     statusEl.textContent = "❌ Échec de l'impression (imprimante hors ligne ou WiFi différent).";
   }
-}
-
-function sendWhatsapp(){
-  if (!lastOrderText) return;
-  const text = encodeURIComponent(lastOrderText);
-  const url = BARMAN_WHATSAPP
-    ? `https://wa.me/${BARMAN_WHATSAPP}?text=${text}`
-    : `https://wa.me/?text=${text}`;
-  window.open(url, '_blank');
-}
-
-function copyOrder(){
-  if (!lastOrderText) return;
-  navigator.clipboard.writeText(lastOrderText).then(() => {
-    alert("Commande copiée ! Colle-la où tu veux (SMS, message...)");
-  });
 }
 </script>
 </body>
