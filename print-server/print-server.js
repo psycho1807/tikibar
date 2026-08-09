@@ -1,45 +1,67 @@
-// Serveur relais Tikibar -> imprimante de tickets (ESC/POS)
+// Serveur relais Tikibar -> imprimante réseau (Brother HL-L3230CDW, laser, pas thermique)
 //
-// Rôle : reçoit les commandes envoyées par le site (bouton "Imprimer au bar")
-// en HTTP, et les imprime sur une imprimante thermique. Fonctionne depuis
-// n'importe quel téléphone (iPhone ou Android) puisque le navigateur ne fait
-// qu'un simple fetch() HTTP — pas besoin de Web Bluetooth/USB côté client.
+// Rôle : reçoit les commandes envoyées par le site (bouton "Envoyer") en HTTP,
+// et les imprime sur une imprimante laser réseau via "raw printing" (port 9100,
+// aussi appelé JetDirect/AppSocket — supporté nativement par les Brother HL).
+// Fonctionne depuis n'importe quel téléphone (iPhone ou Android) puisque le
+// navigateur ne fait qu'un simple fetch() HTTP — pas besoin de driver ou d'app.
 //
-// À faire tourner sur un PC / Mac / Raspberry Pi connecté à l'imprimante,
-// sur le même réseau WiFi que les invités.
+// À faire tourner sur un PC / Mac / Raspberry Pi sur le même réseau WiFi que
+// l'imprimante ET que les invités.
 
 const express = require('express');
 const cors = require('cors');
-const { ThermalPrinter, PrinterTypes } = require('node-thermal-printer');
+const net = require('net');
 
 // ------------------ CONFIG À ADAPTER ------------------
 
 // Port du serveur relais (ce que tu mets dans PRINT_RELAY_URL côté site,
-// ex: http://192.168.1.50:4000/print)
+// ex: http://192.168.100.20:4000/print)
 const PORT = 4000;
 
-// Type d'imprimante : PrinterTypes.EPSON ou PrinterTypes.STAR selon la marque.
-const PRINTER_TYPE = PrinterTypes.EPSON;
+// Adresse IP de l'imprimante Brother HL-L3230CDW sur le réseau local.
+const PRINTER_IP = '192.168.100.28';
 
-// Interface de connexion à l'imprimante — choisis UNE des trois lignes ci-dessous :
-//
-// 1) Imprimante réseau / WiFi (a une adresse IP, port souvent 9100) :
-const PRINTER_INTERFACE = 'tcp://192.168.1.100:9100';
-//
-// 2) Imprimante USB branchée sur cette machine (Linux, exemple) :
-// const PRINTER_INTERFACE = '/dev/usb/lp0';
-//
-// 3) Imprimante Bluetooth appairée comme port série :
-// const PRINTER_INTERFACE = '/dev/tty.thermalprinter'; // macOS, nom variable
+// Port raw printing de l'imprimante (9100 = standard JetDirect/AppSocket).
+const PRINTER_PORT = 9100;
 
 // --------------------------------------------------------
 
-const printer = new ThermalPrinter({
-  type: PRINTER_TYPE,
-  interface: PRINTER_INTERFACE,
-  removeSpecialCharacters: false,
-  options: { timeout: 5000 }
-});
+function buildTicket({ lieu, boisson, glacons }) {
+  const line = '-'.repeat(40);
+  const now = new Date().toLocaleString('fr-FR');
+  return [
+    '',
+    '        *** TIKIBAR ***',
+    line,
+    `  Lieu     : ${lieu}`,
+    `  Boisson  : ${boisson}`,
+    `  Glacons  : ${glacons}`,
+    line,
+    `  ${now}`,
+    '',
+    '',
+    '',
+  ].join('\r\n');
+}
+
+function printRaw(text) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: PRINTER_IP, port: PRINTER_PORT }, () => {
+      // \f (form feed) éjecte/termine la page sur la plupart des imprimantes en mode texte brut.
+      socket.write(text + '\f', 'ascii', () => {
+        socket.end();
+      });
+    });
+    socket.setTimeout(5000);
+    socket.on('timeout', () => {
+      socket.destroy();
+      reject(new Error('Timeout de connexion à l\'imprimante'));
+    });
+    socket.on('error', reject);
+    socket.on('close', () => resolve());
+  });
+}
 
 const app = express();
 app.use(cors());
@@ -47,33 +69,18 @@ app.use(express.json());
 
 app.post('/print', async (req, res) => {
   try {
-    const { lieu, boisson, glacons, text } = req.body || {};
+    const { lieu, boisson, glacons } = req.body || {};
     if (!lieu || !boisson || !glacons) {
       return res.status(400).json({ ok: false, error: 'Commande incomplète' });
     }
 
-    const isConnected = await printer.isPrinterConnected();
-    if (!isConnected) {
-      return res.status(503).json({ ok: false, error: 'Imprimante non connectée' });
-    }
+    // Les accents ne passent pas toujours bien en texte brut ASCII selon le
+    // firmware — on les simplifie pour être sûr que ça s'imprime correctement.
+    const strip = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const ticket = buildTicket({ lieu: strip(lieu), boisson: strip(boisson), glacons: strip(glacons) });
 
-    printer.clear();
-    printer.alignCenter();
-    printer.bold(true);
-    printer.println('🍹 TIKIBAR 🍹');
-    printer.bold(false);
-    printer.drawLine();
-    printer.alignLeft();
-    printer.println(`Lieu     : ${lieu}`);
-    printer.println(`Boisson  : ${boisson}`);
-    printer.println(`Glaçons  : ${glacons}`);
-    printer.drawLine();
-    printer.alignCenter();
-    printer.println(new Date().toLocaleTimeString('fr-FR'));
-    printer.cut();
-
-    await printer.execute();
-    console.log('Ticket imprimé :', text);
+    await printRaw(ticket);
+    console.log('Ticket envoyé à l\'imprimante :', { lieu, boisson, glacons });
     res.json({ ok: true });
   } catch (err) {
     console.error('Erreur impression :', err);
@@ -83,7 +90,8 @@ app.post('/print', async (req, res) => {
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Serveur d'impression Tikibar lancé sur http://0.0.0.0:${PORT}`);
   console.log(`Mets PRINT_RELAY_URL = "http://<IP-de-cette-machine>:${PORT}/print" dans tikibar.html`);
+  console.log(`Imprimante cible : ${PRINTER_IP}:${PRINTER_PORT}`);
 });
