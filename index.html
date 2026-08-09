@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tikibar">
+<meta name="theme-color" content="#000000">
+<title>Welcome to Tikibar</title>
+<style>
+  :root{
+    --bg:#0a0e14;
+    --card:#141a24;
+    --accent:#ffb347;
+    --accent2:#ff6f61;
+    --text:#f2ede3;
+    --muted:#9aa5b1;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:radial-gradient(circle at top, #10182a 0%, #05070c 70%);
+    color:var(--text);
+    padding-bottom:100px;
+  }
+  header{
+    text-align:center;
+    padding:40px 20px 20px;
+  }
+  header .emoji{font-size:2rem;}
+  header h1{
+    font-size:2.4rem;
+    margin:8px 0 4px;
+    background:linear-gradient(90deg,var(--accent),var(--accent2));
+    -webkit-background-clip:text;
+    background-clip:text;
+    color:transparent;
+  }
+  header p{color:var(--muted); margin:0; font-size:.95rem;}
+  section{padding:20px;}
+  h2.cat{
+    font-size:1.1rem;
+    text-transform:uppercase;
+    letter-spacing:.08em;
+    color:var(--accent);
+    margin:28px 0 12px;
+  }
+  .item{
+    background:var(--card);
+    border-radius:14px;
+    padding:14px 16px;
+    margin-bottom:10px;
+    border:1px solid rgba(255,255,255,.05);
+  }
+  .item .name{font-weight:600; font-size:1.05rem;}
+  .item .desc{color:var(--muted); font-size:.88rem; margin-top:2px;}
+  .cta-bar{
+    position:fixed;
+    bottom:0; left:0; right:0;
+    padding:14px 20px calc(14px + env(safe-area-inset-bottom));
+    background:linear-gradient(0deg, #05070c 60%, transparent);
+  }
+  button.order-btn{
+    width:100%;
+    padding:16px;
+    border:none;
+    border-radius:16px;
+    font-size:1.05rem;
+    font-weight:700;
+    background:linear-gradient(90deg,var(--accent),var(--accent2));
+    color:#1a0f00;
+    cursor:pointer;
+  }
+  .modal-overlay{
+    position:fixed; inset:0;
+    background:rgba(0,0,0,.7);
+    display:none;
+    align-items:flex-end;
+    justify-content:center;
+    z-index:50;
+  }
+  .modal-overlay.open{display:flex;}
+  .modal{
+    background:var(--card);
+    width:100%;
+    max-width:480px;
+    border-radius:20px 20px 0 0;
+    padding:24px 20px calc(24px + env(safe-area-inset-bottom));
+    max-height:85vh;
+    overflow-y:auto;
+  }
+  .modal h3{margin-top:0; font-size:1.3rem;}
+  .modal .q{margin:20px 0 8px; font-weight:600; color:var(--muted); font-size:.9rem; text-transform:uppercase; letter-spacing:.06em;}
+  .options{display:flex; flex-wrap:wrap; gap:8px;}
+  .opt{
+    padding:10px 14px;
+    border-radius:12px;
+    border:1px solid rgba(255,255,255,.15);
+    background:transparent;
+    color:var(--text);
+    cursor:pointer;
+    font-size:.95rem;
+  }
+  .opt.selected{
+    background:var(--accent);
+    color:#1a0f00;
+    border-color:var(--accent);
+    font-weight:700;
+  }
+  .modal-actions{
+    display:flex;
+    gap:10px;
+    margin-top:24px;
+  }
+  .modal-actions button{
+    flex:1;
+    padding:14px;
+    border-radius:14px;
+    border:none;
+    font-weight:700;
+    cursor:pointer;
+  }
+  .btn-cancel{background:transparent; color:var(--muted); border:1px solid rgba(255,255,255,.15) !important;}
+  .btn-send{background:linear-gradient(90deg,var(--accent),var(--accent2)); color:#1a0f00;}
+  .ticket{
+    display:none;
+    background:var(--card);
+    border-radius:14px;
+    padding:18px;
+    margin-top:16px;
+    border:1px dashed var(--accent);
+    white-space:pre-wrap;
+    font-size:.95rem;
+    line-height:1.5;
+  }
+  .ticket.open{display:block;}
+  .small-actions{display:flex; gap:8px; margin-top:12px;}
+  .small-actions button{
+    flex:1; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,.15);
+    background:transparent; color:var(--text); font-weight:600; cursor:pointer;
+  }
+  footer{text-align:center; color:var(--muted); padding:30px 0 10px; font-size:1.4rem;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="emoji">🍹🍺🍿</div>
+  <h1>Tikibar</h1>
+  <p>Cocktails d'exception, maîtrisés par Psycho<br>(si Psycho plus étanche, Alfred prend la suite)</p>
+</header>
+
+<section id="menu"></section>
+
+<div class="cta-bar">
+  <button class="order-btn" onclick="openModal()">Tu commandes 🍹</button>
+</div>
+
+<div class="modal-overlay" id="overlay">
+  <div class="modal">
+    <h3>Tu commandes</h3>
+
+    <div class="q">Où es-tu ?</div>
+    <div class="options" data-group="lieu">
+      <button class="opt" data-value="Billard">Billard</button>
+      <button class="opt" data-value="Salon">Salon</button>
+      <button class="opt" data-value="Tikibar">Tikibar</button>
+      <button class="opt" data-value="Salon extérieur">Salon extérieur</button>
+      <button class="opt" data-value="Jacuzzi">Jacuzzi</button>
+    </div>
+
+    <div class="q">Quoi ?</div>
+    <div class="options" data-group="boisson" id="boisson-options"></div>
+
+    <div class="q">Avec glaçons ?</div>
+    <div class="options" data-group="glacons">
+      <button class="opt" data-value="Avec glaçons">Avec glaçons</button>
+      <button class="opt" data-value="Sans glaçons">Sans glaçons</button>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Annuler</button>
+      <button class="btn-send" onclick="sendOrder()">Préparer la commande 🍹</button>
+    </div>
+
+    <div class="ticket" id="ticket"></div>
+    <div class="small-actions" id="ticket-actions" style="display:none;">
+      <button onclick="sendWhatsapp()">Envoyer par WhatsApp</button>
+      <button onclick="copyOrder()">Copier la commande</button>
+    </div>
+  </div>
+</div>
+
+<footer>🌴🌞🦜</footer>
+
+<script>
+// ------- CONFIG -------
+// Numéro WhatsApp du barman, format international sans "+" ni espaces (ex: 33612345678)
+const BARMAN_WHATSAPP = ""; // <-- à compléter si tu veux le bouton WhatsApp actif
+
+const menu = {
+  "Grands classiques": [
+    ["Mojito", "Rhum blanc, sucre de canne, citron vert, menthe, eau gazeuse."],
+    ["Gin tonic", "Gin, tonic, glaçons, zeste de citron ou concombre."],
+    ["Piña colada", "Rhum blanc, jus d'ananas, crème de coco, glace pilée."],
+    ["Margarita", "Tequila, triple sec, jus de citron vert, sel."],
+    ["Moscow mule", "Vodka, ginger beer, citron vert, glaçons."],
+    ["Daiquiri", "Rhum blanc, jus de citron vert, sirop de sucre."],
+    ["Negroni", "Gin, Campari, vermouth rouge, à parts égales."],
+    ["Cosmopolitan", "Vodka, triple sec, jus de cranberry, citron vert."],
+    ["Whisky sour", "Whisky, jus de citron, sirop de sucre, trait d'angostura."],
+    ["St-Germain Spritz", "St-Germain, vin pétillant, eau gazeuse, zeste de citron."],
+    ["Cuba Libre", "Rhum blanc, Coca, citron vert."],
+    ["Dark 'n' Stormy", "Rhum ambré, ginger beer, citron vert."],
+    ["Ti' Punch", "Rhum ambré, sucre de canne, citron vert."],
+    ["Whisky Buck", "Whisky, ginger beer, citron vert."],
+    ["Americano", "Campari, vermouth rouge, eau gazeuse."],
+    ["Campari Spritz", "Campari, vin pétillant, eau gazeuse."],
+    ["Vodka Cranberry", "Vodka, jus de cranberry."],
+    ["Screwdriver", "Vodka, jus de fruits."],
+    ["Rhum Punch tropical", "Rhum ambré, jus d'ananas, jus de cranberry, sirop de sucre."],
+    ["Planteur", "Rhum ambré, jus d'ananas, jus de cranberry, trait d'angostura, sirop de sucre."],
+    ["Tequila Sunrise", "Tequila, jus d'orange, grenadine."],
+    ["Paloma", "Tequila, citron vert, sel, soda pamplemousse."],
+    ["Kir Royal", "Vin pétillant, crème de cassis."]
+  ],
+  "Spiritueux": [
+    ["Whisky", "Servi sec ou sur glaçons, au choix."],
+    ["Rhum", "Blanc ou ambré, avec ou sans glaçons."],
+    ["Vodka", "Pure, avec ou sans glaçons."],
+    ["Vin", "Rouge, blanc ou rosé, au choix."],
+    ["Bière", "Corona, Desperados ou Leffe, au choix."]
+  ],
+  "Softs": [
+    ["Coca", "Coca-Cola bien frais."],
+    ["Red Bull", "Red Bull glacé."],
+    ["Limonade", "Limonade pétillante."],
+    ["Jus de fruits", "Orange, pomme ou ananas."],
+    ["Perrier", "Eau gazeuse Perrier, glaçons."]
+  ]
+};
+
+const menuEl = document.getElementById('menu');
+const boissonOptionsEl = document.getElementById('boisson-options');
+for (const [cat, items] of Object.entries(menu)) {
+  const h2 = document.createElement('h2');
+  h2.className = 'cat';
+  h2.textContent = cat;
+  menuEl.appendChild(h2);
+  items.forEach(([name, desc]) => {
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML = `<div class="name">${name}</div><div class="desc">${desc}</div>`;
+    menuEl.appendChild(div);
+
+    const opt = document.createElement('button');
+    opt.className = 'opt';
+    opt.dataset.value = name;
+    opt.textContent = name;
+    boissonOptionsEl.appendChild(opt);
+  });
+}
+
+document.querySelectorAll('.options').forEach(group => {
+  group.addEventListener('click', e => {
+    const btn = e.target.closest('.opt');
+    if (!btn) return;
+    group.querySelectorAll('.opt').forEach(o => o.classList.remove('selected'));
+    btn.classList.add('selected');
+  });
+});
+
+function getSelected(group) {
+  const el = document.querySelector(`.options[data-group="${group}"] .opt.selected`);
+  return el ? el.dataset.value : null;
+}
+
+function openModal(){ document.getElementById('overlay').classList.add('open'); }
+function closeModal(){
+  document.getElementById('overlay').classList.remove('open');
+  document.getElementById('ticket').classList.remove('open');
+  document.getElementById('ticket-actions').style.display = 'none';
+}
+
+let lastOrderText = "";
+
+function sendOrder(){
+  const lieu = getSelected('lieu');
+  const boisson = getSelected('boisson');
+  const glacons = getSelected('glacons');
+
+  if (!lieu || !boisson || !glacons) {
+    alert("Choisis un lieu, une boisson et glaçons ou non 🙏");
+    return;
+  }
+
+  lastOrderText = `🍹 Commande Tikibar\nLieu : ${lieu}\nBoisson : ${boisson}\nGlaçons : ${glacons}`;
+
+  const ticket = document.getElementById('ticket');
+  ticket.textContent = lastOrderText;
+  ticket.classList.add('open');
+  document.getElementById('ticket-actions').style.display = 'flex';
+}
+
+function sendWhatsapp(){
+  if (!lastOrderText) return;
+  const text = encodeURIComponent(lastOrderText);
+  const url = BARMAN_WHATSAPP
+    ? `https://wa.me/${BARMAN_WHATSAPP}?text=${text}`
+    : `https://wa.me/?text=${text}`;
+  window.open(url, '_blank');
+}
+
+function copyOrder(){
+  if (!lastOrderText) return;
+  navigator.clipboard.writeText(lastOrderText).then(() => {
+    alert("Commande copiée ! Colle-la où tu veux (SMS, message...)");
+  });
+}
+</script>
+</body>
+</html>
