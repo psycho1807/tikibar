@@ -1,0 +1,15 @@
+{
+  "name": "tikibar-print-server",
+  "version": "1.0.0",
+  "description": "Petit serveur relais qui reçoit les commandes du site Tikibar et les imprime sur une imprimante de tickets (ESC/POS).",
+  "main": "print-server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node print-server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "node-thermal-printer": "^4.4.4"
+  }
+}
