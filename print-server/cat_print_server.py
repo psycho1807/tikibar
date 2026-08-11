@@ -246,19 +246,33 @@ async def print_ticket_ble(img):
     async with BleakClient(address) as client:
         print(f"[debug] connecte: {client.is_connected}")
 
+        # Log complet des services/caracteristiques vues par ce client, au cas
+        # ou ae01/ae02 ne seraient pas sous le service qu'on croit.
+        for svc in client.services:
+            print(f"[debug] service {svc.uuid}")
+            for ch in svc.characteristics:
+                print(f"[debug]   char {ch.uuid} props={ch.properties}")
+
         def on_notify(_sender, payload):
-            print(f"[debug] notification recue: {bytes(payload)!r}")
+            raw = bytes(payload)
+            print(f"[debug] notification recue ({len(raw)} octets): {raw.hex()}")
 
         await client.start_notify(RX_CHARACTERISTIC_UUID, on_notify)
 
+        # Envoie d'abord la demande d'etat et attend la reponse avant de
+        # continuer, pour voir si l'imprimante signale une erreur (pas de
+        # papier, capot ouvert...) avant d'envoyer l'image.
+        await client.write_gatt_char(TX_CHARACTERISTIC_UUID, cmd_get_device_state(), response=False)
+        await asyncio.sleep(0.5)
+
         # Une commande = une ecriture BLE, comme le fait le SDK JS de reference
         # (au lieu de tout concatener puis decouper par MTU).
-        for cmd in cmds:
+        for cmd in cmds[1:]:
             await client.write_gatt_char(TX_CHARACTERISTIC_UUID, cmd, response=False)
             await asyncio.sleep(0.03)
 
         print(f"[debug] {len(cmds)} commandes envoyees")
-        await asyncio.sleep(0.5)  # laisse le temps au firmware de traiter la fin
+        await asyncio.sleep(1.0)  # laisse le temps au firmware de traiter la fin
 
 
 # ---- Serveur HTTP ----
