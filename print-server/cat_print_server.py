@@ -81,6 +81,14 @@ CMD_LATTICE_END = bs(
 )
 CMD_SET_PAPER = bs([81, 120, -95, 0, 2, 0, 48, 0, -7, -1])
 
+
+def reverse_bits(byte_val):
+    'Inverse l ordre des bits d un octet (MSB<->LSB), attendu par le firmware'
+    b = byte_val
+    b = ((b & 0b10101010) >> 1) | ((b & 0b01010101) << 1)
+    b = ((b & 0b11001100) >> 2) | ((b & 0b00110011) << 2)
+    return ((b & 0b11110000) >> 4) | ((b & 0b00001111) << 4)
+
 CHECKSUM_TABLE = bs(
     [
         0, 7, 14, 9, 28, 27, 18, 21, 56, 63, 54, 49, 36, 35, 42, 45, 112, 119, 126,
@@ -128,32 +136,6 @@ def cmd_apply_energy():
     return bs(b_arr)
 
 
-def encode_run_length_repetition(n, val):
-    res = []
-    while n > 0x7F:
-        res.append(0x7F | (val << 7))
-        n -= 0x7F
-    if n > 0:
-        res.append((val << 7) | n)
-    return res
-
-
-def run_length_encode(img_row):
-    res = []
-    count = 0
-    last_val = -1
-    for val in img_row:
-        if val == last_val:
-            count += 1
-        else:
-            res.extend(encode_run_length_repetition(count, last_val))
-            count = 1
-        last_val = val
-    if count > 0:
-        res.extend(encode_run_length_repetition(count, last_val))
-    return res
-
-
 def byte_encode(img_row):
     def bit_encode(chunk_start, bit_index):
         return 1 << bit_index if img_row[chunk_start + bit_index] else 0
@@ -163,23 +145,23 @@ def byte_encode(img_row):
         byte = 0
         for bit_index in range(8):
             byte |= bit_encode(chunk_start, bit_index)
-        res.append(byte)
+        res.append(reverse_bits(byte))
     return res
 
 
 def cmd_print_row(img_row):
-    encoded_img = run_length_encode(img_row)
-    if len(encoded_img) > PRINT_WIDTH // 8:
-        encoded_img = byte_encode(img_row)
-        b_arr = bs([81, 120, -94, 0, len(encoded_img), 0] + list(encoded_img) + [0, 0xFF])
-        b_arr[-2] = chk_sum(b_arr, 6, len(encoded_img))
-        return b_arr
-    b_arr = bs([81, 120, -65, 0, len(encoded_img), 0] + list(encoded_img) + [0, 0xFF])
+    # Beaucoup de clones "cat printer" (dont la PM290C, apparemment) ne
+    # supportent pas la commande compressee (run-length, opcode 0xBF) : elle
+    # est silencieusement ignoree par le firmware. On utilise donc toujours
+    # l'encodage brut (opcode 0xA2 = "draw_bitmap"), avec inversion des bits
+    # par octet comme l'exige le firmware.
+    encoded_img = byte_encode(img_row)
+    b_arr = bs([81, 120, -94, 0, len(encoded_img), 0] + list(encoded_img) + [0, 0xFF])
     b_arr[-2] = chk_sum(b_arr, 6, len(encoded_img))
     return b_arr
 
 
-def cmds_print_img(img, energy=0xFFFF):
+def cmds_print_img(img, energy=0x6000):
     data = bytearray()
     data += CMD_GET_DEV_STATE
     data += CMD_SET_QUALITY_200_DPI
