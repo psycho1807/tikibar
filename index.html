@@ -165,11 +165,10 @@
 
 <script>
 // ------- CONFIG -------
-// URL du petit serveur relais qui pilote l'imprimante de tickets (voir print-server/).
-// Doit être joignable depuis le téléphone des invités : soit l'IP locale du PC/Raspberry
-// qui héberge print-server.js sur le même WiFi (ex: "http://192.168.1.50:4000/print"),
-// soit une URL publique si tu exposes ce serveur sur internet.
-const PRINT_RELAY_URL = "http://192.168.100.38:4000/print"; // Mac de Psycho (print-server.js doit tourner)
+// Webhook Home Assistant (via Nabu Casa, joignable depuis n'importe quel réseau).
+// Déclenche l'automation "Tikibar - Commande vers iPhone Psycho" qui notifie
+// l'iPhone de Psycho et tente de lancer le Raccourci "TikibarPrint".
+const PRINT_RELAY_URL = "https://a5ep397zy4zubj4re2yy7dubfztmhbnc.ui.nabu.casa/api/webhook/tikibar-b2aad63d2949dcacbab3a69813d2423e";
 
 const menu = {
   "Grands classiques": [
@@ -269,11 +268,11 @@ async function sendOrder(){
   lastOrderText = `🍹 Commande Tikibar\nLieu : ${lieu}\nBoisson : ${currentBoisson}\nGlaçons : ${glacons}`;
 
   if (!PRINT_RELAY_URL) {
-    statusEl.textContent = "Imprimante pas encore configurée (PRINT_RELAY_URL vide).";
+    statusEl.textContent = "Envoi pas encore configuré (PRINT_RELAY_URL vide).";
     return;
   }
 
-  statusEl.textContent = "Envoi à l'imprimante…";
+  statusEl.textContent = "Envoi de la commande…";
   try {
     const res = await fetch(PRINT_RELAY_URL, {
       method: 'POST',
@@ -290,7 +289,7 @@ async function sendOrder(){
     statusEl.textContent = "✅ Ton cocktail arrive !";
     setTimeout(closeModal, 1500);
   } catch (err) {
-    statusEl.textContent = "❌ Échec de l'impression (imprimante hors ligne ou WiFi différent).";
+    statusEl.textContent = "❌ Échec de l'envoi de la commande, réessaie.";
   }
 }
 </script>
