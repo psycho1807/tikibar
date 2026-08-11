@@ -243,36 +243,77 @@ async def print_ticket_ble(img):
     address = await find_printer()
     print(f"[debug] imprimante trouvee: {address}")
 
+    # Candidats (write, notify) observes sur cette imprimante : elle expose
+    # plusieurs "personnalites" BLE (compat. avec differents protocoles de
+    # fabricants). On teste chacune avec juste la demande d'etat, et on
+    # n'envoie l'image complete qu'a celle(s) qui repondent vraiment.
+    CANDIDATE_PAIRS = [
+        ("0000ff02-0000-1000-8000-00805f9b34fb", "0000ff01-0000-1000-8000-00805f9b34fb", "ff00/ff02-ff01"),
+        ("0000ff04-0000-1000-8000-00805f9b34fb", "0000ff03-0000-1000-8000-00805f9b34fb", "ff00/ff04-ff03"),
+        ("0000ae3b-0000-1000-8000-00805f9b34fb", "0000ae3c-0000-1000-8000-00805f9b34fb", "ae3a/ae3b-ae3c"),
+        (TX_CHARACTERISTIC_UUID, RX_CHARACTERISTIC_UUID, "ae00/ae01-ae02"),
+    ]
+
     async with BleakClient(address) as client:
         print(f"[debug] connecte: {client.is_connected}")
 
-        # Log complet des services/caracteristiques vues par ce client, au cas
-        # ou ae01/ae02 ne seraient pas sous le service qu'on croit.
         for svc in client.services:
             print(f"[debug] service {svc.uuid}")
             for ch in svc.characteristics:
                 print(f"[debug]   char {ch.uuid} props={ch.properties}")
 
-        def on_notify(_sender, payload):
-            raw = bytes(payload)
-            print(f"[debug] notification recue ({len(raw)} octets): {raw.hex()}")
+        responsive_pairs = []
 
-        await client.start_notify(RX_CHARACTERISTIC_UUID, on_notify)
+        for write_uuid, notify_uuid, label in CANDIDATE_PAIRS:
+            responses = []
 
-        # Envoie d'abord la demande d'etat et attend la reponse avant de
-        # continuer, pour voir si l'imprimante signale une erreur (pas de
-        # papier, capot ouvert...) avant d'envoyer l'image.
-        await client.write_gatt_char(TX_CHARACTERISTIC_UUID, cmd_get_device_state(), response=False)
-        await asyncio.sleep(0.5)
+            def on_notify(_sender, payload, _label=label):
+                raw = bytes(payload)
+                print(f"[debug] [{_label}] notification recue ({len(raw)} octets): {raw.hex()}")
+                responses.append(raw)
 
-        # Une commande = une ecriture BLE, comme le fait le SDK JS de reference
-        # (au lieu de tout concatener puis decouper par MTU).
-        for cmd in cmds[1:]:
-            await client.write_gatt_char(TX_CHARACTERISTIC_UUID, cmd, response=False)
-            await asyncio.sleep(0.03)
+            try:
+                await client.start_notify(notify_uuid, on_notify)
+            except Exception as e:
+                print(f"[debug] [{label}] impossible de s'abonner: {e}")
+                continue
 
-        print(f"[debug] {len(cmds)} commandes envoyees")
-        await asyncio.sleep(1.0)  # laisse le temps au firmware de traiter la fin
+            try:
+                await client.write_gatt_char(write_uuid, cmd_get_device_state(), response=False)
+            except Exception as e:
+                print(f"[debug] [{label}] echec ecriture sondage: {e}")
+                await client.stop_notify(notify_uuid)
+                continue
+
+            await asyncio.sleep(0.6)
+            await client.stop_notify(notify_uuid)
+
+            if responses:
+                print(f"[debug] [{label}] REPOND -> candidat retenu")
+                responsive_pairs.append((write_uuid, notify_uuid, label))
+            else:
+                print(f"[debug] [{label}] aucune reponse")
+
+        if not responsive_pairs:
+            print("[debug] Aucun canal ne repond a la sonde. Envoi quand meme sur ae00/ae01-ae02 par defaut.")
+            responsive_pairs = [(TX_CHARACTERISTIC_UUID, RX_CHARACTERISTIC_UUID, "ae00/ae01-ae02 (defaut)")]
+
+        for write_uuid, notify_uuid, label in responsive_pairs:
+            print(f"[debug] Envoi de l'image complete sur {label}")
+
+            def on_notify2(_sender, payload, _label=label):
+                raw = bytes(payload)
+                print(f"[debug] [{_label}] notification recue ({len(raw)} octets): {raw.hex()}")
+
+            await client.start_notify(notify_uuid, on_notify2)
+
+            for cmd in cmds:
+                await client.write_gatt_char(write_uuid, cmd, response=False)
+                await asyncio.sleep(0.03)
+
+            print(f"[debug] [{label}] {len(cmds)} commandes envoyees")
+            await asyncio.sleep(1.0)
+            await client.stop_notify(notify_uuid)
 
 
 # ---- Serveur HTTP ----
