@@ -37,9 +37,14 @@ from bleak import BleakClient, BleakScanner
 
 PORT = 4001
 
-# Adresse Bluetooth de la PM290C, trouvee via le scan Home Assistant.
-# Si l'imprimante est re-appairee/remplacee, relance un scan pour la retrouver.
-PRINTER_ADDRESS = "51:82:C1:A7:C3:86"
+# Adresse Bluetooth de la PM290C, telle que vue par Home Assistant (Linux/BlueZ).
+# IMPORTANT : sur macOS, CoreBluetooth masque les vraies adresses MAC pour des
+# raisons de confidentialite et donne un identifiant different par app/systeme.
+# Se connecter directement avec l'adresse ci-dessus NE MARCHE PAS sur Mac : on
+# laisse donc PRINTER_ADDRESS a None pour forcer une decouverte par scan
+# (filtree sur le service BLE du protocole "cat printer"), qui fonctionne sur
+# toutes les plateformes.
+PRINTER_ADDRESS = None
 
 PRINT_WIDTH = 384  # largeur d'impression en pixels, standard pour ces imprimantes 58mm
 
@@ -260,9 +265,11 @@ async def find_printer():
         return PRINTER_ADDRESS
 
     def filter_fn(device, adv_data):
+        if device.name and "PM290" in device.name:
+            return True
         return any(u in (adv_data.service_uuids or []) for u in POSSIBLE_SERVICE_UUIDS)
 
-    device = await BleakScanner.find_device_by_filter(filter_fn, timeout=10)
+    device = await BleakScanner.find_device_by_filter(filter_fn, timeout=15)
     if device is None:
         raise RuntimeError("Imprimante introuvable en Bluetooth (allumee ? a portee ?)")
     return device.address
