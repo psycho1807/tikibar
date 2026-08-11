@@ -52,131 +52,103 @@ PRINT_WIDTH = 384  # largeur d'impression en pixels, standard pour ces imprimant
 
 # ---- Protocole BLE "cat printer" (port de catprinter/ble.py) ----
 
-POSSIBLE_SERVICE_UUIDS = [
-    "0000ae30-0000-1000-8000-00805f9b34fb",
-    "0000af30-0000-1000-8000-00805f9b34fb",
-]
 TX_CHARACTERISTIC_UUID = "0000ae01-0000-1000-8000-00805f9b34fb"
 RX_CHARACTERISTIC_UUID = "0000ae02-0000-1000-8000-00805f9b34fb"
-PRINTER_READY_NOTIFICATION = b"\x51\x78\xae\x01\x01\x00\x00\x00\xff"
 
-# ---- Protocole d'impression (port de catprinter/cmds.py) ----
+# ---- Protocole d'impression ----
+# Aligne sur https://github.com/opuu/cat-printer (SDK JS activement maintenu,
+# teste avec succes en connexion sur cette PM290C precise) plutot que sur
+# l'implementation Python plus ancienne de rbaron/catprinter : les deux
+# divergent sur plusieurs points (pas de commandes "lattice"/DPI, energie sur
+# 4 octets, pas d'inversion de bits, get_device_state avec payload [1]).
 
+CMD_GET_DEV_STATE = 0xA3
+CMD_SPEED = 0xBD
+CMD_ENERGY = 0xAF
+CMD_APPLY_ENERGY = 0xBE
+CMD_BITMAP = 0xA2
+CMD_FEED = 0xA1
 
-def to_unsigned_byte(val):
-    return val if val >= 0 else val & 0xFF
-
-
-def bs(lst):
-    return bytearray(map(to_unsigned_byte, lst))
-
-
-CMD_GET_DEV_STATE = bs([81, 120, -93, 0, 1, 0, 0, 0, -1])
-CMD_SET_QUALITY_200_DPI = bs([81, 120, -92, 0, 1, 0, 50, -98, -1])
-CMD_LATTICE_START = bs(
-    [81, 120, -90, 0, 11, 0, -86, 85, 23, 56, 68, 95, 95, 95, 68, 56, 44, -95, -1]
-)
-CMD_LATTICE_END = bs(
-    [81, 120, -90, 0, 11, 0, -86, 85, 23, 0, 0, 0, 0, 0, 0, 0, 23, 17, -1]
-)
-CMD_SET_PAPER = bs([81, 120, -95, 0, 2, 0, 48, 0, -7, -1])
+DEFAULT_SPEED = 32
+DEFAULT_ENERGY = 24000  # 0x5DE0, valeur par defaut du SDK JS de reference
 
 
-def reverse_bits(byte_val):
-    'Inverse l ordre des bits d un octet (MSB<->LSB), attendu par le firmware'
-    b = byte_val
-    b = ((b & 0b10101010) >> 1) | ((b & 0b01010101) << 1)
-    b = ((b & 0b11001100) >> 2) | ((b & 0b00110011) << 2)
-    return ((b & 0b11110000) >> 4) | ((b & 0b00001111) << 4)
-
-CHECKSUM_TABLE = bs(
-    [
-        0, 7, 14, 9, 28, 27, 18, 21, 56, 63, 54, 49, 36, 35, 42, 45, 112, 119, 126,
-        121, 108, 107, 98, 101, 72, 79, 70, 65, 84, 83, 90, 93, -32, -25, -18, -23,
-        -4, -5, -14, -11, -40, -33, -42, -47, -60, -61, -54, -51, -112, -105, -98,
-        -103, -116, -117, -126, -123, -88, -81, -90, -95, -76, -77, -70, -67, -57,
-        -64, -55, -50, -37, -36, -43, -46, -1, -8, -15, -10, -29, -28, -19, -22,
-        -73, -80, -71, -66, -85, -84, -91, -94, -113, -120, -127, -122, -109, -108,
-        -99, -102, 39, 32, 41, 46, 59, 60, 53, 50, 31, 24, 17, 22, 3, 4, 13, 10, 87,
-        80, 89, 94, 75, 76, 69, 66, 111, 104, 97, 102, 115, 116, 125, 122, -119,
-        -114, -121, -128, -107, -110, -101, -100, -79, -74, -65, -72, -83, -86, -93,
-        -92, -7, -2, -9, -16, -27, -30, -21, -20, -63, -58, -49, -56, -35, -38, -45,
-        -44, 105, 110, 103, 96, 117, 114, 123, 124, 81, 86, 95, 88, 77, 74, 67, 68,
-        25, 30, 23, 16, 5, 2, 11, 12, 33, 38, 47, 40, 61, 58, 51, 52, 78, 73, 64, 71,
-        82, 85, 92, 91, 118, 113, 120, 127, 106, 109, 100, 99, 62, 57, 48, 55, 34,
-        37, 44, 43, 6, 1, 8, 15, 26, 29, 20, 19, -82, -87, -96, -89, -78, -75, -68,
-        -69, -106, -111, -104, -97, -118, -115, -124, -125, -34, -39, -48, -41, -62,
-        -59, -52, -53, -26, -31, -24, -17, -6, -3, -12, -13,
-    ]
-)
+def crc8(data):
+    'CRC-8, polynome 0x07 (identique a la table utilisee par les autres implementations "cat printer")'
+    crc = 0
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            if crc & 0x80:
+                crc = ((crc << 1) ^ 0x07) & 0xFF
+            else:
+                crc = (crc << 1) & 0xFF
+    return crc
 
 
-def chk_sum(b_arr, i, i2):
-    b2 = 0
-    for i3 in range(i, i + i2):
-        b2 = CHECKSUM_TABLE[(b2 ^ b_arr[i3]) & 0xFF]
-    return b2
+def make_command(command, payload):
+    payload = bytes(payload)
+    header = bytes(
+        [0x51, 0x78, command, 0x00, len(payload) & 0xFF, (len(payload) >> 8) & 0xFF]
+    )
+    return header + payload + bytes([crc8(payload), 0xFF])
 
 
-def cmd_feed_paper(how_much):
-    b_arr = bs([81, 120, -67, 0, 1, 0, how_much & 0xFF, 0, 0xFF])
-    b_arr[7] = chk_sum(b_arr, 6, 1)
-    return bs(b_arr)
+def cmd_get_device_state():
+    return make_command(CMD_GET_DEV_STATE, [1])
 
 
-def cmd_set_energy(val):
-    b_arr = bs([81, 120, -81, 0, 2, 0, (val >> 8) & 0xFF, val & 0xFF, 0, 0xFF])
-    b_arr[8] = chk_sum(b_arr, 6, 2)
-    return bs(b_arr)
+def cmd_set_speed(speed):
+    return make_command(CMD_SPEED, [speed & 0xFF])
+
+
+def cmd_set_energy(energy):
+    return make_command(
+        CMD_ENERGY,
+        [energy & 0xFF, (energy >> 8) & 0xFF, (energy >> 16) & 0xFF, (energy >> 24) & 0xFF],
+    )
 
 
 def cmd_apply_energy():
-    b_arr = bs([81, 120, -66, 0, 1, 0, 1, 0, 0xFF])
-    b_arr[7] = chk_sum(b_arr, 6, 1)
-    return bs(b_arr)
+    return make_command(CMD_APPLY_ENERGY, [1])
+
+
+def cmd_feed(lines):
+    return make_command(CMD_FEED, [lines & 0xFF, (lines >> 8) & 0xFF])
 
 
 def byte_encode(img_row):
-    def bit_encode(chunk_start, bit_index):
-        return 1 << bit_index if img_row[chunk_start + bit_index] else 0
-
-    res = []
+    'Empaquette une ligne de pixels (bool) en octets, bit de poids faible en premier'
+    res = bytearray()
     for chunk_start in range(0, len(img_row), 8):
         byte = 0
         for bit_index in range(8):
-            byte |= bit_encode(chunk_start, bit_index)
-        res.append(reverse_bits(byte))
-    return res
+            if img_row[chunk_start + bit_index]:
+                byte |= 1 << bit_index
+        res.append(byte)
+    return bytes(res)
 
 
-def cmd_print_row(img_row):
-    # Beaucoup de clones "cat printer" (dont la PM290C, apparemment) ne
-    # supportent pas la commande compressee (run-length, opcode 0xBF) : elle
-    # est silencieusement ignoree par le firmware. On utilise donc toujours
-    # l'encodage brut (opcode 0xA2 = "draw_bitmap"), avec inversion des bits
-    # par octet comme l'exige le firmware.
-    encoded_img = byte_encode(img_row)
-    b_arr = bs([81, 120, -94, 0, len(encoded_img), 0] + list(encoded_img) + [0, 0xFF])
-    b_arr[-2] = chk_sum(b_arr, 6, len(encoded_img))
-    return b_arr
+def cmd_draw_row(img_row):
+    encoded = byte_encode(img_row)
+    return make_command(CMD_BITMAP, encoded)
 
 
-def cmds_print_img(img, energy=0x6000):
-    data = bytearray()
-    data += CMD_GET_DEV_STATE
-    data += CMD_SET_QUALITY_200_DPI
-    data += cmd_set_energy(energy)
-    data += cmd_apply_energy()
-    data += CMD_LATTICE_START
+def cmds_print_img(img, speed=DEFAULT_SPEED, energy=DEFAULT_ENERGY):
+    'Retourne une LISTE de commandes individuelles (une par ecriture BLE), comme le SDK de reference'
+    cmds = [
+        cmd_get_device_state(),
+        cmd_set_speed(speed),
+        cmd_set_energy(energy),
+        cmd_apply_energy(),
+    ]
     for row in img:
-        data += cmd_print_row(row)
-    data += cmd_feed_paper(25)
-    data += CMD_SET_PAPER
-    data += CMD_SET_PAPER
-    data += CMD_SET_PAPER
-    data += CMD_LATTICE_END
-    data += CMD_GET_DEV_STATE
-    return data
+        # Les lignes entierement blanches sont ignorees (comme le SDK de reference)
+        if any(row):
+            cmds.append(cmd_draw_row(row))
+    cmds.append(cmd_set_speed(8))
+    cmds.append(cmd_feed(80))
+    return cmds
 
 
 # ---- Rendu du ticket texte -> image monochrome 384px ----
@@ -242,6 +214,12 @@ def img_to_bool_rows(img):
 # ---- Connexion Bluetooth et envoi ----
 
 
+POSSIBLE_SCAN_SERVICE_UUIDS = [
+    "0000ae30-0000-1000-8000-00805f9b34fb",
+    "0000af30-0000-1000-8000-00805f9b34fb",
+]
+
+
 async def find_printer():
     if PRINTER_ADDRESS:
         return PRINTER_ADDRESS
@@ -249,7 +227,7 @@ async def find_printer():
     def filter_fn(device, adv_data):
         if device.name and "PM290" in device.name:
             return True
-        return any(u in (adv_data.service_uuids or []) for u in POSSIBLE_SERVICE_UUIDS)
+        return any(u in (adv_data.service_uuids or []) for u in POSSIBLE_SCAN_SERVICE_UUIDS)
 
     device = await BleakScanner.find_device_by_filter(filter_fn, timeout=15)
     if device is None:
@@ -259,46 +237,28 @@ async def find_printer():
 
 async def print_ticket_ble(img):
     rows = img_to_bool_rows(img)
-    data = cmds_print_img(rows)
-    print(f"[debug] image: {len(rows)} lignes x {PRINT_WIDTH}px, {len(data)} octets a envoyer")
+    cmds = cmds_print_img(rows)
+    print(f"[debug] image: {len(rows)} lignes x {PRINT_WIDTH}px, {len(cmds)} commandes a envoyer")
 
     address = await find_printer()
     print(f"[debug] imprimante trouvee: {address}")
 
     async with BleakClient(address) as client:
         print(f"[debug] connecte: {client.is_connected}")
-        for svc in client.services:
-            print(f"[debug] service {svc.uuid}")
-            for ch in svc.characteristics:
-                print(f"[debug]   char {ch.uuid} props={ch.properties}")
-
-        chunk_size = (client.mtu_size or 23) - 3
-        if chunk_size < 20:
-            chunk_size = 20
-        print(f"[debug] mtu_size={client.mtu_size} chunk_size={chunk_size}")
-
-        ready = asyncio.Event()
 
         def on_notify(_sender, payload):
             print(f"[debug] notification recue: {bytes(payload)!r}")
-            if bytes(payload) == PRINTER_READY_NOTIFICATION:
-                ready.set()
 
         await client.start_notify(RX_CHARACTERISTIC_UUID, on_notify)
 
-        n_chunks = 0
-        for i in range(0, len(data), chunk_size):
-            chunk = data[i : i + chunk_size]
-            await client.write_gatt_char(TX_CHARACTERISTIC_UUID, chunk)
-            n_chunks += 1
-            await asyncio.sleep(0.02)
-        print(f"[debug] {n_chunks} paquets envoyes")
+        # Une commande = une ecriture BLE, comme le fait le SDK JS de reference
+        # (au lieu de tout concatener puis decouper par MTU).
+        for cmd in cmds:
+            await client.write_gatt_char(TX_CHARACTERISTIC_UUID, cmd, response=False)
+            await asyncio.sleep(0.03)
 
-        try:
-            await asyncio.wait_for(ready.wait(), timeout=20)
-            print("[debug] notification 'pret' recue")
-        except asyncio.TimeoutError:
-            print("[debug] timeout en attendant la notification 'pret' (pas forcement grave)")
+        print(f"[debug] {len(cmds)} commandes envoyees")
+        await asyncio.sleep(0.5)  # laisse le temps au firmware de traiter la fin
 
 
 # ---- Serveur HTTP ----
