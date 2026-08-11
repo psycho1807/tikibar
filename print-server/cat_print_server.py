@@ -278,30 +278,45 @@ async def find_printer():
 async def print_ticket_ble(img):
     rows = img_to_bool_rows(img)
     data = cmds_print_img(rows)
+    print(f"[debug] image: {len(rows)} lignes x {PRINT_WIDTH}px, {len(data)} octets a envoyer")
 
     address = await find_printer()
+    print(f"[debug] imprimante trouvee: {address}")
+
     async with BleakClient(address) as client:
+        print(f"[debug] connecte: {client.is_connected}")
+        for svc in client.services:
+            print(f"[debug] service {svc.uuid}")
+            for ch in svc.characteristics:
+                print(f"[debug]   char {ch.uuid} props={ch.properties}")
+
         chunk_size = (client.mtu_size or 23) - 3
         if chunk_size < 20:
             chunk_size = 20
+        print(f"[debug] mtu_size={client.mtu_size} chunk_size={chunk_size}")
 
         ready = asyncio.Event()
 
         def on_notify(_sender, payload):
+            print(f"[debug] notification recue: {bytes(payload)!r}")
             if bytes(payload) == PRINTER_READY_NOTIFICATION:
                 ready.set()
 
         await client.start_notify(RX_CHARACTERISTIC_UUID, on_notify)
 
+        n_chunks = 0
         for i in range(0, len(data), chunk_size):
             chunk = data[i : i + chunk_size]
             await client.write_gatt_char(TX_CHARACTERISTIC_UUID, chunk)
+            n_chunks += 1
             await asyncio.sleep(0.02)
+        print(f"[debug] {n_chunks} paquets envoyes")
 
         try:
             await asyncio.wait_for(ready.wait(), timeout=20)
+            print("[debug] notification 'pret' recue")
         except asyncio.TimeoutError:
-            pass  # on n'echoue pas juste parce que la notif finale a ete manquee
+            print("[debug] timeout en attendant la notification 'pret' (pas forcement grave)")
 
 
 # ---- Serveur HTTP ----
