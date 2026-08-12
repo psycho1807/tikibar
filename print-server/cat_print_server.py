@@ -2,18 +2,20 @@
 """
 Serveur relais Tikibar -> imprimante PM290C (Etikez/Cerise "sticker printer")
 
-La PM290C n'a pas d'API officielle, mais elle utilise en interne le protocole
-Bluetooth Low Energy generique des "cat printers" chinois (memes puces que les
-GB01/GB02/GT01, reverse-engineered par la communaute open source, notamment
-https://github.com/rbaron/catprinter). Confirme ici car Home Assistant a
-detecte la PM290C annoncant le service BLE 0000af30-...-34fb, qui correspond
-exactement a ce protocole.
+IMPORTANT (reecrit apres capture Bluetooth reelle) : contrairement a ce qu'on
+pensait au depart, cette imprimante ne parle PAS le protocole binaire "cat
+printer" (GB01/GB02/GT01). Une capture du trafic Bluetooth reel de l'app
+Labelnize (via `pymobiledevice3 btlogger`) a revele qu'elle parle en fait
+**TSPL** (Trans-Shift Printer Language), un protocole texte tres repandu sur
+les imprimantes d'etiquettes thermiques (SIZE / GAP / DIRECTION / DENSITY /
+CLS / PRINT / BITMAP), envoye sur le canal BLE service 0xff00, caracteristique
+d'ecriture 0xff04 (write-without-response), caracteristique de notification
+0xff03.
 
 Ce script :
 1. Recoit une commande en HTTP POST (JSON: lieu, boisson, glacons, text)
 2. Genere un ticket sous forme d'image (texte -> bitmap 384px de large)
-3. Se connecte en Bluetooth a la PM290C et envoie l'image selon le protocole
-   "cat printer" (memes commandes que catprinter/cmds.py)
+3. Se connecte en Bluetooth a la PM290C et envoie l'image en TSPL
 
 A faire tourner sur une machine avec Bluetooth a portee de l'imprimante
 (ex: le Mac de Psycho, ou la machine qui heberge Home Assistant).
@@ -37,118 +39,61 @@ from bleak import BleakClient, BleakScanner
 
 PORT = 4001
 
-# Adresse Bluetooth de la PM290C, telle que vue par Home Assistant (Linux/BlueZ).
-# IMPORTANT : sur macOS, CoreBluetooth masque les vraies adresses MAC pour des
-# raisons de confidentialite et donne un identifiant different par app/systeme.
-# Se connecter directement avec l'adresse ci-dessus NE MARCHE PAS sur Mac : on
-# laisse donc PRINTER_ADDRESS a None pour forcer une decouverte par scan
-# (filtree sur le service BLE du protocole "cat printer"), qui fonctionne sur
-# toutes les plateformes.
+# Adresse Bluetooth de la PM290C. Sur macOS, CoreBluetooth masque les vraies
+# adresses MAC (confidentialite) : on laisse a None pour forcer une
+# decouverte par scan a chaque impression, qui fonctionne partout.
 PRINTER_ADDRESS = None
 
-PRINT_WIDTH = 384  # largeur d'impression en pixels, standard pour ces imprimantes 58mm
+PRINT_WIDTH = 384       # largeur d'impression en pixels
+PRINT_WIDTH_MM = 54     # largeur physique en mm (confirmee par la capture reelle Labelnize)
+PRINT_WIDTH_BYTES = PRINT_WIDTH // 8  # 48, confirme par la capture ("BITMAP 0,0,48,...")
 
 # ---------------------------------------------
 
-# ---- Protocole BLE "cat printer" (port de catprinter/ble.py) ----
+# ---- Canal BLE reel (confirme par capture Bluetooth de Labelnize) ----
+# L'imprimante expose plusieurs "personnalites" GATT ; celle-ci est la seule
+# qui repond et que Labelnize utilise reellement.
+WRITE_CHARACTERISTIC_UUID = "0000ff04-0000-1000-8000-00805f9b34fb"
+NOTIFY_CHARACTERISTIC_UUID = "0000ff03-0000-1000-8000-00805f9b34fb"
 
-TX_CHARACTERISTIC_UUID = "0000ae01-0000-1000-8000-00805f9b34fb"
-RX_CHARACTERISTIC_UUID = "0000ae02-0000-1000-8000-00805f9b34fb"
+CHUNK_SIZE = 244  # taille de decoupe observee dans la capture reelle (limite MTU)
 
-# ---- Protocole d'impression ----
-# Aligne sur https://github.com/opuu/cat-printer (SDK JS activement maintenu,
-# teste avec succes en connexion sur cette PM290C precise) plutot que sur
-# l'implementation Python plus ancienne de rbaron/catprinter : les deux
-# divergent sur plusieurs points (pas de commandes "lattice"/DPI, energie sur
-# 4 octets, pas d'inversion de bits, get_device_state avec payload [1]).
-
-CMD_GET_DEV_STATE = 0xA3
-CMD_SPEED = 0xBD
-CMD_ENERGY = 0xAF
-CMD_APPLY_ENERGY = 0xBE
-CMD_BITMAP = 0xA2
-CMD_FEED = 0xA1
-
-DEFAULT_SPEED = 32
-DEFAULT_ENERGY = 24000  # 0x5DE0, valeur par defaut du SDK JS de reference
+# ---- Protocole TSPL ----
 
 
-def crc8(data):
-    'CRC-8, polynome 0x07 (identique a la table utilisee par les autres implementations "cat printer")'
-    crc = 0
-    for byte in data:
-        crc ^= byte
-        for _ in range(8):
-            if crc & 0x80:
-                crc = ((crc << 1) ^ 0x07) & 0xFF
-            else:
-                crc = (crc << 1) & 0xFF
-    return crc
+def build_tspl_job(bitmap_bytes, width_bytes, height_px, width_mm, height_mm, density=10):
+    """Construit un job d'impression TSPL complet (commandes texte + bitmap brut),
+    calque exactement sur ce qu'envoie Labelnize (capture Bluetooth reelle)."""
+    header = (
+        f"SIZE {width_mm} mm,{height_mm} mm\r\n"
+        "GAP 0,0\r\n"
+        "DIRECTION 0,0\r\n"
+        f"DENSITY {density}\r\n"
+        "CLS\r\n"
+        "PRINT 1,1\r\n"
+        f"BITMAP 0,0,{width_bytes},{height_px},1,"
+    ).encode("ascii")
+    return header + bitmap_bytes + b"\r\n"
 
 
-def make_command(command, payload):
-    payload = bytes(payload)
-    header = bytes(
-        [0x51, 0x78, command, 0x00, len(payload) & 0xFF, (len(payload) >> 8) & 0xFF]
-    )
-    return header + payload + bytes([crc8(payload), 0xFF])
-
-
-def cmd_get_device_state():
-    return make_command(CMD_GET_DEV_STATE, [1])
-
-
-def cmd_set_speed(speed):
-    return make_command(CMD_SPEED, [speed & 0xFF])
-
-
-def cmd_set_energy(energy):
-    return make_command(
-        CMD_ENERGY,
-        [energy & 0xFF, (energy >> 8) & 0xFF, (energy >> 16) & 0xFF, (energy >> 24) & 0xFF],
-    )
-
-
-def cmd_apply_energy():
-    return make_command(CMD_APPLY_ENERGY, [1])
-
-
-def cmd_feed(lines):
-    return make_command(CMD_FEED, [lines & 0xFF, (lines >> 8) & 0xFF])
-
-
-def byte_encode(img_row):
-    'Empaquette une ligne de pixels (bool) en octets, bit de poids faible en premier'
+def byte_encode_msb(img_row):
+    """Empaquette une ligne de pixels (bool, True = noir) en octets,
+    bit de poids FORT en premier (MSB first, standard TSPL/ESC-POS)."""
     res = bytearray()
     for chunk_start in range(0, len(img_row), 8):
         byte = 0
         for bit_index in range(8):
             if img_row[chunk_start + bit_index]:
-                byte |= 1 << bit_index
+                byte |= 1 << (7 - bit_index)
         res.append(byte)
     return bytes(res)
 
 
-def cmd_draw_row(img_row):
-    encoded = byte_encode(img_row)
-    return make_command(CMD_BITMAP, encoded)
-
-
-def cmds_print_img(img, speed=DEFAULT_SPEED, energy=DEFAULT_ENERGY):
-    'Retourne une LISTE de commandes individuelles (une par ecriture BLE), comme le SDK de reference'
-    cmds = [
-        cmd_get_device_state(),
-        cmd_set_speed(speed),
-        cmd_set_energy(energy),
-        cmd_apply_energy(),
-    ]
-    for row in img:
-        # Les lignes entierement blanches sont ignorees (comme le SDK de reference)
-        if any(row):
-            cmds.append(cmd_draw_row(row))
-    cmds.append(cmd_set_speed(8))
-    cmds.append(cmd_feed(80))
-    return cmds
+def img_to_tspl_bitmap(rows, width_bytes):
+    out = bytearray()
+    for row in rows:
+        out += byte_encode_msb(row)
+    return bytes(out)
 
 
 # ---- Rendu du ticket texte -> image monochrome 384px ----
@@ -184,6 +129,8 @@ def render_ticket(lieu, boisson, glacons):
 
     line_height = 30
     img_height = line_height * len(wrapped) + 20
+    # La hauteur doit etre un multiple de 8 pour un empaquetage bitmap propre.
+    img_height = ((img_height + 7) // 8) * 8
     img = Image.new("L", (PRINT_WIDTH, img_height), color=255)
     draw = ImageDraw.Draw(img)
 
@@ -201,7 +148,7 @@ def render_ticket(lieu, boisson, glacons):
 
 def img_to_bool_rows(img):
     """Convertit une image PIL en niveaux de gris en lignes de booleens
-    (True = encre noire), format attendu par cmds_print_img."""
+    (True = encre noire)."""
     px = img.load()
     w, h = img.size
     rows = []
@@ -213,8 +160,8 @@ def img_to_bool_rows(img):
 
 # ---- Connexion Bluetooth et envoi ----
 
-
 POSSIBLE_SCAN_SERVICE_UUIDS = [
+    "0000ff00-0000-1000-8000-00805f9b34fb",
     "0000ae30-0000-1000-8000-00805f9b34fb",
     "0000af30-0000-1000-8000-00805f9b34fb",
 ]
@@ -237,83 +184,39 @@ async def find_printer():
 
 async def print_ticket_ble(img):
     rows = img_to_bool_rows(img)
-    cmds = cmds_print_img(rows)
-    print(f"[debug] image: {len(rows)} lignes x {PRINT_WIDTH}px, {len(cmds)} commandes a envoyer")
+    height_px = len(rows)
+    bitmap = img_to_tspl_bitmap(rows, PRINT_WIDTH_BYTES)
+    height_mm = round(height_px * PRINT_WIDTH_MM / PRINT_WIDTH, 1)
+
+    job = build_tspl_job(bitmap, PRINT_WIDTH_BYTES, height_px, PRINT_WIDTH_MM, height_mm)
+    print(f"[debug] image: {height_px} lignes x {PRINT_WIDTH}px, job TSPL de {len(job)} octets")
 
     address = await find_printer()
     print(f"[debug] imprimante trouvee: {address}")
 
-    # Candidats (write, notify) observes sur cette imprimante : elle expose
-    # plusieurs "personnalites" BLE (compat. avec differents protocoles de
-    # fabricants). On teste chacune avec juste la demande d'etat, et on
-    # n'envoie l'image complete qu'a celle(s) qui repondent vraiment.
-    CANDIDATE_PAIRS = [
-        ("0000ff02-0000-1000-8000-00805f9b34fb", "0000ff01-0000-1000-8000-00805f9b34fb", "ff00/ff02-ff01"),
-        ("0000ff04-0000-1000-8000-00805f9b34fb", "0000ff03-0000-1000-8000-00805f9b34fb", "ff00/ff04-ff03"),
-        ("0000ae3b-0000-1000-8000-00805f9b34fb", "0000ae3c-0000-1000-8000-00805f9b34fb", "ae3a/ae3b-ae3c"),
-        (TX_CHARACTERISTIC_UUID, RX_CHARACTERISTIC_UUID, "ae00/ae01-ae02"),
-    ]
-
     async with BleakClient(address) as client:
         print(f"[debug] connecte: {client.is_connected}")
 
-        for svc in client.services:
-            print(f"[debug] service {svc.uuid}")
-            for ch in svc.characteristics:
-                print(f"[debug]   char {ch.uuid} props={ch.properties}")
+        def on_notify(_sender, payload):
+            raw = bytes(payload)
+            print(f"[debug] notification recue ({len(raw)} octets): {raw.hex()}")
 
-        responsive_pairs = []
+        try:
+            await client.start_notify(NOTIFY_CHARACTERISTIC_UUID, on_notify)
+        except Exception as e:
+            print(f"[debug] abonnement notify impossible (non bloquant): {e}")
 
-        for write_uuid, notify_uuid, label in CANDIDATE_PAIRS:
-            responses = []
+        # Decoupe en morceaux de CHUNK_SIZE octets, comme observe dans la
+        # capture reelle du trafic Labelnize.
+        n_chunks = 0
+        for i in range(0, len(job), CHUNK_SIZE):
+            chunk = job[i:i + CHUNK_SIZE]
+            await client.write_gatt_char(WRITE_CHARACTERISTIC_UUID, chunk, response=False)
+            n_chunks += 1
+            await asyncio.sleep(0.02)
 
-            def on_notify(_sender, payload, _label=label):
-                raw = bytes(payload)
-                print(f"[debug] [{_label}] notification recue ({len(raw)} octets): {raw.hex()}")
-                responses.append(raw)
-
-            try:
-                await client.start_notify(notify_uuid, on_notify)
-            except Exception as e:
-                print(f"[debug] [{label}] impossible de s'abonner: {e}")
-                continue
-
-            try:
-                await client.write_gatt_char(write_uuid, cmd_get_device_state(), response=False)
-            except Exception as e:
-                print(f"[debug] [{label}] echec ecriture sondage: {e}")
-                await client.stop_notify(notify_uuid)
-                continue
-
-            await asyncio.sleep(0.6)
-            await client.stop_notify(notify_uuid)
-
-            if responses:
-                print(f"[debug] [{label}] REPOND -> candidat retenu")
-                responsive_pairs.append((write_uuid, notify_uuid, label))
-            else:
-                print(f"[debug] [{label}] aucune reponse")
-
-        if not responsive_pairs:
-            print("[debug] Aucun canal ne repond a la sonde. Envoi quand meme sur ae00/ae01-ae02 par defaut.")
-            responsive_pairs = [(TX_CHARACTERISTIC_UUID, RX_CHARACTERISTIC_UUID, "ae00/ae01-ae02 (defaut)")]
-
-        for write_uuid, notify_uuid, label in responsive_pairs:
-            print(f"[debug] Envoi de l'image complete sur {label}")
-
-            def on_notify2(_sender, payload, _label=label):
-                raw = bytes(payload)
-                print(f"[debug] [{_label}] notification recue ({len(raw)} octets): {raw.hex()}")
-
-            await client.start_notify(notify_uuid, on_notify2)
-
-            for cmd in cmds:
-                await client.write_gatt_char(write_uuid, cmd, response=False)
-                await asyncio.sleep(0.03)
-
-            print(f"[debug] [{label}] {len(cmds)} commandes envoyees")
-            await asyncio.sleep(1.0)
-            await client.stop_notify(notify_uuid)
+        print(f"[debug] job envoye en {n_chunks} morceaux")
+        await asyncio.sleep(1.5)  # laisse le temps a l'imprimante de traiter/imprimer
 
 
 # ---- Serveur HTTP ----
@@ -343,5 +246,5 @@ def health():
 
 
 if __name__ == "__main__":
-    print(f"Serveur d'impression Tikibar (PM290C via BLE) sur http://0.0.0.0:{PORT}")
+    print(f"Serveur d'impression Tikibar (PM290C via BLE, protocole TSPL) sur http://0.0.0.0:{PORT}")
     app.run(host="0.0.0.0", port=PORT)
