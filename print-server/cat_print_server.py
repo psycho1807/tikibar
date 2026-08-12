@@ -207,16 +207,30 @@ async def print_ticket_ble(img):
             print(f"[debug] abonnement notify impossible (non bloquant): {e}")
 
         # Decoupe en morceaux de CHUNK_SIZE octets, comme observe dans la
-        # capture reelle du trafic Labelnize.
+        # capture reelle du trafic Labelnize. Pas de pause = paquets perdus
+        # en cours de route (write-without-response n'a pas d'accuse de
+        # reception), d'ou les impressions tronquees observees. On ralentit
+        # nettement et on verifie que chaque ecriture reussit vraiment.
         n_chunks = 0
-        for i in range(0, len(job), CHUNK_SIZE):
+        total = len(job)
+        for i in range(0, total, CHUNK_SIZE):
             chunk = job[i:i + CHUNK_SIZE]
-            await client.write_gatt_char(WRITE_CHARACTERISTIC_UUID, chunk, response=False)
+            for attempt in range(3):
+                try:
+                    await client.write_gatt_char(WRITE_CHARACTERISTIC_UUID, chunk, response=False)
+                    break
+                except Exception as e:
+                    print(f"[debug] echec ecriture morceau {n_chunks} (tentative {attempt+1}): {e}")
+                    await asyncio.sleep(0.2)
+            else:
+                raise RuntimeError(f"Echec d'envoi du morceau {n_chunks} apres 3 tentatives")
             n_chunks += 1
-            await asyncio.sleep(0.02)
+            if n_chunks % 10 == 0:
+                print(f"[debug] {i + len(chunk)}/{total} octets envoyes")
+            await asyncio.sleep(0.08)
 
-        print(f"[debug] job envoye en {n_chunks} morceaux")
-        await asyncio.sleep(1.5)  # laisse le temps a l'imprimante de traiter/imprimer
+        print(f"[debug] job envoye en {n_chunks} morceaux ({total} octets)")
+        await asyncio.sleep(2.5)  # laisse le temps a l'imprimante de traiter/imprimer
 
 
 # ---- Serveur HTTP ----
