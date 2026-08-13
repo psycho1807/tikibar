@@ -263,6 +263,33 @@ let currentBoisson = null;
 let currentCategory = null;
 let lastOrderText = "";
 
+// ------- Anti-spam : 1 commande par prénom toutes les 20 minutes -------
+const COOLDOWN_MS = 20 * 60 * 1000;
+const COOLDOWN_MESSAGES = [
+  "Doucement champion, laisse decanter 🍹 Encore {min} min avant la prochaine.",
+  "L'abus d'alcool est dangereux, meme pour toi 😏 Reviens dans {min} min.",
+  "Ton foie te remercie de patienter encore {min} min.",
+  "Le barman est en pause forcee. Encore {min} min de patience."
+];
+
+function getCooldowns(){
+  try { return JSON.parse(localStorage.getItem('tikibar_cooldowns') || '{}'); }
+  catch (e) { return {}; }
+}
+function setCooldown(prenomKey){
+  const cooldowns = getCooldowns();
+  cooldowns[prenomKey] = Date.now();
+  localStorage.setItem('tikibar_cooldowns', JSON.stringify(cooldowns));
+}
+function checkCooldown(prenomKey){
+  const cooldowns = getCooldowns();
+  const last = cooldowns[prenomKey];
+  if (!last) return null;
+  const remaining = COOLDOWN_MS - (Date.now() - last);
+  if (remaining <= 0) return null;
+  return Math.ceil(remaining / 60000);
+}
+
 function openModal(boisson, category){
   currentBoisson = boisson;
   currentCategory = category;
@@ -301,6 +328,14 @@ async function sendOrder(){
     return;
   }
 
+  const prenomKey = prenom.toLowerCase();
+  const remainingMin = checkCooldown(prenomKey);
+  if (remainingMin !== null) {
+    const msg = COOLDOWN_MESSAGES[Math.floor(Math.random() * COOLDOWN_MESSAGES.length)];
+    statusEl.textContent = "🙅 " + msg.replace('{min}', remainingMin);
+    return;
+  }
+
   lastOrderText = `🍹 Commande Tikibar\nPrénom : ${prenom}\nLieu : ${lieu}\nBoisson : ${currentBoisson}` +
     (glacons ? `\nGlaçons : ${glacons}` : '');
 
@@ -324,6 +359,7 @@ async function sendOrder(){
       })
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
+    setCooldown(prenomKey);
     statusEl.textContent = "✅ Ton cocktail arrive !";
     setTimeout(closeModal, 1500);
   } catch (err) {
