@@ -254,6 +254,21 @@ def http_print():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/print_test", methods=["GET"])
+def http_print_test():
+    """Imprime un rectangle noir de N lignes pour trouver la limite de
+    memoire tampon de l'imprimante par dichotomie.
+    Exemple : curl "http://localhost:4001/print_test?rows=40" """
+    rows = int(request.args.get("rows", 40))
+    img = Image.new("L", (PRINT_WIDTH, rows), color=0)  # tout noir
+    try:
+        asyncio.run(print_ticket_ble(img))
+        return jsonify({"ok": True, "rows": rows, "job_bytes": rows * PRINT_WIDTH_BYTES + 90})
+    except Exception as e:
+        print(f"Erreur impression test: {e}")
+        return jsonify({"ok": False, "rows": rows, "error": str(e)}), 500
+
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"ok": True})
