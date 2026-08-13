@@ -182,13 +182,13 @@ async def find_printer():
     return device.address
 
 
-async def print_ticket_ble(img):
+async def print_ticket_ble(img, density=10):
     rows = img_to_bool_rows(img)
     height_px = len(rows)
     bitmap = img_to_tspl_bitmap(rows, PRINT_WIDTH_BYTES)
     height_mm = round(height_px * PRINT_WIDTH_MM / PRINT_WIDTH, 1)
 
-    job = build_tspl_job(bitmap, PRINT_WIDTH_BYTES, height_px, PRINT_WIDTH_MM, height_mm)
+    job = build_tspl_job(bitmap, PRINT_WIDTH_BYTES, height_px, PRINT_WIDTH_MM, height_mm, density=density)
     print(f"[debug] image: {height_px} lignes x {PRINT_WIDTH}px, job TSPL de {len(job)} octets")
 
     address = await find_printer()
@@ -260,13 +260,14 @@ def http_print_test():
     memoire tampon de l'imprimante par dichotomie.
     Exemple : curl "http://localhost:4001/print_test?rows=40" """
     rows = int(request.args.get("rows", 40))
+    density = int(request.args.get("density", 10))
     img = Image.new("L", (PRINT_WIDTH, rows), color=0)  # tout noir
     try:
-        asyncio.run(print_ticket_ble(img))
-        return jsonify({"ok": True, "rows": rows, "job_bytes": rows * PRINT_WIDTH_BYTES + 90})
+        asyncio.run(print_ticket_ble(img, density=density))
+        return jsonify({"ok": True, "rows": rows, "density": density, "job_bytes": rows * PRINT_WIDTH_BYTES + 90})
     except Exception as e:
         print(f"Erreur impression test: {e}")
-        return jsonify({"ok": False, "rows": rows, "error": str(e)}), 500
+        return jsonify({"ok": False, "rows": rows, "density": density, "error": str(e)}), 500
 
 
 @app.route("/health", methods=["GET"])
