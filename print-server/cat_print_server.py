@@ -61,7 +61,7 @@ CHUNK_SIZE = 244  # taille de decoupe observee dans la capture reelle (limite MT
 # ---- Protocole TSPL ----
 
 
-def build_tspl_header(width_bytes, height_px, width_mm, height_mm, density=10):
+def build_tspl_header(width_bytes, height_px, width_mm, height_mm, density=10, mode=1):
     """Construit uniquement l'en-tete texte TSPL (sans les donnees bitmap).
     Dans la capture Bluetooth reelle de Labelnize, cet en-tete est envoye dans
     une ecriture BLE a part, separee des donnees binaires qui suivent - les
@@ -74,7 +74,7 @@ def build_tspl_header(width_bytes, height_px, width_mm, height_mm, density=10):
         f"DENSITY {density}\r\n"
         "CLS\r\n"
         "PRINT 1,1\r\n"
-        f"BITMAP 0,0,{width_bytes},{height_px},1,"
+        f"BITMAP 0,0,{width_bytes},{height_px},{mode},"
     ).encode("ascii")
 
 
@@ -184,13 +184,13 @@ async def find_printer():
     return device.address
 
 
-async def print_ticket_ble(img, density=10):
+async def print_ticket_ble(img, density=10, mode=1):
     rows = img_to_bool_rows(img)
     height_px = len(rows)
     bitmap = img_to_tspl_bitmap(rows, PRINT_WIDTH_BYTES)
     height_mm = round(height_px * PRINT_WIDTH_MM / PRINT_WIDTH, 1)
 
-    header = build_tspl_header(PRINT_WIDTH_BYTES, height_px, PRINT_WIDTH_MM, height_mm, density=density)
+    header = build_tspl_header(PRINT_WIDTH_BYTES, height_px, PRINT_WIDTH_MM, height_mm, density=density, mode=mode)
     data = bitmap + b"\r\n"
     print(f"[debug] image: {height_px} lignes x {PRINT_WIDTH}px, en-tete {len(header)} octets + donnees {len(data)} octets")
 
@@ -269,13 +269,15 @@ def http_print_test():
     Exemple : curl "http://localhost:4001/print_test?rows=40" """
     rows = int(request.args.get("rows", 40))
     density = int(request.args.get("density", 10))
-    img = Image.new("L", (PRINT_WIDTH, rows), color=0)  # tout noir
+    mode = int(request.args.get("mode", 1))
+    fill = int(request.args.get("fill", 0))  # 0 = notre "noir" habituel, 255 = invente
+    img = Image.new("L", (PRINT_WIDTH, rows), color=fill)
     try:
-        asyncio.run(print_ticket_ble(img, density=density))
-        return jsonify({"ok": True, "rows": rows, "density": density, "job_bytes": rows * PRINT_WIDTH_BYTES + 90})
+        asyncio.run(print_ticket_ble(img, density=density, mode=mode))
+        return jsonify({"ok": True, "rows": rows, "density": density, "mode": mode, "fill": fill})
     except Exception as e:
         print(f"Erreur impression test: {e}")
-        return jsonify({"ok": False, "rows": rows, "density": density, "error": str(e)}), 500
+        return jsonify({"ok": False, "rows": rows, "density": density, "mode": mode, "fill": fill, "error": str(e)}), 500
 
 
 @app.route("/health", methods=["GET"])
