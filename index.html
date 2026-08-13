@@ -263,8 +263,11 @@ let currentBoisson = null;
 let currentCategory = null;
 let lastOrderText = "";
 
-// ------- Anti-spam : 1 commande par prénom toutes les 20 minutes -------
+// ------- Anti-spam : 1 commande toutes les 20 minutes par appareil -------
+// (par appareil et non par prénom : sinon il suffit de taper un faux prénom
+// pour contourner la limite)
 const COOLDOWN_MS = 20 * 60 * 1000;
+const COOLDOWN_KEY = 'tikibar_last_order_ts';
 const COOLDOWN_MESSAGES = [
   "Doucement champion, laisse decanter 🍹 Encore {min} min avant la prochaine.",
   "L'abus d'alcool est dangereux, meme pour toi 😏 Reviens dans {min} min.",
@@ -272,18 +275,11 @@ const COOLDOWN_MESSAGES = [
   "Le barman est en pause forcee. Encore {min} min de patience."
 ];
 
-function getCooldowns(){
-  try { return JSON.parse(localStorage.getItem('tikibar_cooldowns') || '{}'); }
-  catch (e) { return {}; }
+function setCooldown(){
+  localStorage.setItem(COOLDOWN_KEY, String(Date.now()));
 }
-function setCooldown(prenomKey){
-  const cooldowns = getCooldowns();
-  cooldowns[prenomKey] = Date.now();
-  localStorage.setItem('tikibar_cooldowns', JSON.stringify(cooldowns));
-}
-function checkCooldown(prenomKey){
-  const cooldowns = getCooldowns();
-  const last = cooldowns[prenomKey];
+function checkCooldown(){
+  const last = Number(localStorage.getItem(COOLDOWN_KEY) || 0);
   if (!last) return null;
   const remaining = COOLDOWN_MS - (Date.now() - last);
   if (remaining <= 0) return null;
@@ -328,8 +324,7 @@ async function sendOrder(){
     return;
   }
 
-  const prenomKey = prenom.toLowerCase();
-  const remainingMin = checkCooldown(prenomKey);
+  const remainingMin = checkCooldown();
   if (remainingMin !== null) {
     const msg = COOLDOWN_MESSAGES[Math.floor(Math.random() * COOLDOWN_MESSAGES.length)];
     statusEl.textContent = "🙅 " + msg.replace('{min}', remainingMin);
@@ -359,7 +354,7 @@ async function sendOrder(){
       })
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    setCooldown(prenomKey);
+    setCooldown();
     statusEl.textContent = "✅ Ton cocktail arrive !";
     setTimeout(closeModal, 1500);
   } catch (err) {
