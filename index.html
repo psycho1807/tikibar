@@ -103,6 +103,17 @@
     border-color:var(--accent);
     font-weight:700;
   }
+  .field-input{
+    width:100%;
+    padding:12px 14px;
+    border-radius:12px;
+    border:1px solid rgba(255,255,255,.15);
+    background:transparent;
+    color:var(--text);
+    font-size:1rem;
+  }
+  .field-input::placeholder{color:var(--muted);}
+  .field-input:focus{outline:none; border-color:var(--accent);}
   .modal-actions{
     display:flex;
     gap:10px;
@@ -137,6 +148,9 @@
   <div class="modal">
     <h3 id="modal-title">Tu commandes</h3>
 
+    <div class="q">Ton prénom</div>
+    <input type="text" id="prenom-input" class="field-input" placeholder="Ton prénom" maxlength="30" autocomplete="given-name">
+
     <div class="q">Où es-tu ?</div>
     <div class="options" data-group="lieu">
       <button class="opt" data-value="Billard">Billard</button>
@@ -146,8 +160,8 @@
       <button class="opt" data-value="Jacuzzi">Jacuzzi</button>
     </div>
 
-    <div class="q">Avec glaçons ?</div>
-    <div class="options" data-group="glacons">
+    <div class="q" id="glacons-question" style="display:none;">Avec glaçons ?</div>
+    <div class="options" data-group="glacons" id="glacons-group" style="display:none;">
       <button class="opt" data-value="Avec glaçons">Avec glaçons</button>
       <button class="opt" data-value="Sans glaçons">Sans glaçons</button>
     </div>
@@ -212,6 +226,10 @@ const menu = {
   ]
 };
 
+// Seule la categorie "Spiritueux" propose le choix des glacons (whisky, rhum,
+// vodka, vin, biere...) - les cocktails ont deja les glacons dans la recette.
+const GLACONS_CATEGORIES = ["Spiritueux"];
+
 const menuEl = document.getElementById('menu');
 for (const [cat, items] of Object.entries(menu)) {
   const h2 = document.createElement('h2');
@@ -222,7 +240,7 @@ for (const [cat, items] of Object.entries(menu)) {
     const div = document.createElement('div');
     div.className = 'item';
     div.innerHTML = `<div class="name">${name}</div><div class="desc">${desc}</div>`;
-    div.addEventListener('click', () => openModal(name));
+    div.addEventListener('click', () => openModal(name, cat));
     menuEl.appendChild(div);
   });
 }
@@ -242,30 +260,49 @@ function getSelected(group) {
 }
 
 let currentBoisson = null;
+let currentCategory = null;
 let lastOrderText = "";
 
-function openModal(boisson){
+function openModal(boisson, category){
   currentBoisson = boisson;
+  currentCategory = category;
   document.getElementById('modal-title').textContent = `Tu commandes : ${boisson}`;
+
+  const needsGlacons = GLACONS_CATEGORIES.includes(category);
+  document.getElementById('glacons-question').style.display = needsGlacons ? '' : 'none';
+  document.getElementById('glacons-group').style.display = needsGlacons ? '' : 'none';
+
   document.getElementById('overlay').classList.add('open');
 }
 function closeModal(){
   document.getElementById('overlay').classList.remove('open');
   document.getElementById('print-status').textContent = '';
+  document.getElementById('prenom-input').value = '';
   document.querySelectorAll('.opt.selected').forEach(o => o.classList.remove('selected'));
 }
 
 async function sendOrder(){
+  const prenom = document.getElementById('prenom-input').value.trim();
   const lieu = getSelected('lieu');
-  const glacons = getSelected('glacons');
+  const needsGlacons = GLACONS_CATEGORIES.includes(currentCategory);
+  const glacons = needsGlacons ? getSelected('glacons') : null;
   const statusEl = document.getElementById('print-status');
 
-  if (!currentBoisson || !lieu || !glacons) {
-    alert("Choisis un lieu et glaçons ou non 🙏");
+  if (!prenom) {
+    alert("Indique ton prénom 🙏");
+    return;
+  }
+  if (!currentBoisson || !lieu) {
+    alert("Choisis un lieu 🙏");
+    return;
+  }
+  if (needsGlacons && !glacons) {
+    alert("Avec ou sans glaçons ? 🙏");
     return;
   }
 
-  lastOrderText = `🍹 Commande Tikibar\nLieu : ${lieu}\nBoisson : ${currentBoisson}\nGlaçons : ${glacons}`;
+  lastOrderText = `🍹 Commande Tikibar\nPrénom : ${prenom}\nLieu : ${lieu}\nBoisson : ${currentBoisson}` +
+    (glacons ? `\nGlaçons : ${glacons}` : '');
 
   if (!PRINT_RELAY_URL) {
     statusEl.textContent = "Envoi pas encore configuré (PRINT_RELAY_URL vide).";
@@ -278,9 +315,10 @@ async function sendOrder(){
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        prenom,
         lieu,
         boisson: currentBoisson,
-        glacons,
+        glacons: glacons || '',
         text: lastOrderText,
         ts: new Date().toISOString()
       })

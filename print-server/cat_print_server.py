@@ -104,7 +104,10 @@ def img_to_tspl_bitmap(rows, width_bytes):
 # ---- Rendu du ticket texte -> image monochrome 384px ----
 
 
-def render_ticket(lieu, boisson, glacons):
+BOTTOM_MARGIN_PX = 70  # ~9-10mm de blanc en bas pour pouvoir dechirer le ticket proprement
+
+
+def render_ticket(prenom, lieu, boisson, glacons):
     font_big = ImageFont.load_default()
     try:
         font_big = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 26)
@@ -115,9 +118,13 @@ def render_ticket(lieu, boisson, glacons):
     lines = [
         ("*** TIKIBAR ***", font_big, True),
         ("", font_small, False),
+        (f"Prenom: {prenom}", font_small, False),
         (f"Lieu: {lieu}", font_small, False),
         (f"Boisson: {boisson}", font_small, False),
-        (f"Glacons: {glacons}", font_small, False),
+    ]
+    if glacons:
+        lines.append((f"Glacons: {glacons}", font_small, False))
+    lines += [
         ("", font_small, False),
         (datetime.now().strftime("%d/%m/%Y %H:%M"), font_small, False),
         ("", font_small, False),
@@ -133,7 +140,8 @@ def render_ticket(lieu, boisson, glacons):
             wrapped.append((text, font, center))
 
     line_height = 30
-    img_height = line_height * len(wrapped) + 20
+    content_height = line_height * len(wrapped) + 20
+    img_height = content_height + BOTTOM_MARGIN_PX
     # La hauteur doit etre un multiple de 8 pour un empaquetage bitmap propre.
     img_height = ((img_height + 7) // 8) * 8
     img = Image.new("L", (PRINT_WIDTH, img_height), color=255)
@@ -252,12 +260,13 @@ app = Flask(__name__)
 @app.route("/print", methods=["POST"])
 def http_print():
     payload = request.get_json(force=True, silent=True) or {}
+    prenom = payload.get("prenom", "?")
     lieu = payload.get("lieu", "?")
     boisson = payload.get("boisson", "?")
-    glacons = payload.get("glacons", "?")
+    glacons = payload.get("glacons", "")  # vide si non applicable (cocktails, softs...)
 
     try:
-        img = render_ticket(lieu, boisson, glacons)
+        img = render_ticket(prenom, lieu, boisson, glacons)
         asyncio.run(print_ticket_ble(img))
         return jsonify({"ok": True})
     except Exception as e:
