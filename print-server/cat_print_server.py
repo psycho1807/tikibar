@@ -61,10 +61,13 @@ CHUNK_SIZE = 244  # taille de decoupe observee dans la capture reelle (limite MT
 # ---- Protocole TSPL ----
 
 
-def build_tspl_job(bitmap_bytes, width_bytes, height_px, width_mm, height_mm, density=10):
-    """Construit un job d'impression TSPL complet (commandes texte + bitmap brut),
-    calque exactement sur ce qu'envoie Labelnize (capture Bluetooth reelle)."""
-    header = (
+def build_tspl_header(width_bytes, height_px, width_mm, height_mm, density=10):
+    """Construit uniquement l'en-tete texte TSPL (sans les donnees bitmap).
+    Dans la capture Bluetooth reelle de Labelnize, cet en-tete est envoye dans
+    une ecriture BLE a part, separee des donnees binaires qui suivent - les
+    melanger dans le meme paquet semble perturber le parseur de l'imprimante
+    (impression blanche/vide observee quand on les combine)."""
+    return (
         f"SIZE {width_mm} mm,{height_mm} mm\r\n"
         "GAP 0,0\r\n"
         "DIRECTION 0,0\r\n"
@@ -73,7 +76,6 @@ def build_tspl_job(bitmap_bytes, width_bytes, height_px, width_mm, height_mm, de
         "PRINT 1,1\r\n"
         f"BITMAP 0,0,{width_bytes},{height_px},1,"
     ).encode("ascii")
-    return header + bitmap_bytes + b"\r\n"
 
 
 def byte_encode_msb(img_row):
@@ -188,8 +190,9 @@ async def print_ticket_ble(img, density=10):
     bitmap = img_to_tspl_bitmap(rows, PRINT_WIDTH_BYTES)
     height_mm = round(height_px * PRINT_WIDTH_MM / PRINT_WIDTH, 1)
 
-    job = build_tspl_job(bitmap, PRINT_WIDTH_BYTES, height_px, PRINT_WIDTH_MM, height_mm, density=density)
-    print(f"[debug] image: {height_px} lignes x {PRINT_WIDTH}px, job TSPL de {len(job)} octets")
+    header = build_tspl_header(PRINT_WIDTH_BYTES, height_px, PRINT_WIDTH_MM, height_mm, density=density)
+    data = bitmap + b"\r\n"
+    print(f"[debug] image: {height_px} lignes x {PRINT_WIDTH}px, en-tete {len(header)} octets + donnees {len(data)} octets")
 
     address = await find_printer()
     print(f"[debug] imprimante trouvee: {address}")
@@ -206,30 +209,35 @@ async def print_ticket_ble(img, density=10):
         except Exception as e:
             print(f"[debug] abonnement notify impossible (non bloquant): {e}")
 
-        # Decoupe en morceaux de CHUNK_SIZE octets, comme observe dans la
-        # capture reelle du trafic Labelnize. Pas de pause = paquets perdus
-        # en cours de route (write-without-response n'a pas d'accuse de
-        # reception), d'ou les impressions tronquees observees. On ralentit
-        # nettement et on verifie que chaque ecriture reussit vraiment.
-        n_chunks = 0
-        total = len(job)
-        for i in range(0, total, CHUNK_SIZE):
-            chunk = job[i:i + CHUNK_SIZE]
-            for attempt in range(3):
-                try:
-                    await client.write_gatt_char(WRITE_CHARACTERISTIC_UUID, chunk, response=False)
-                    break
-                except Exception as e:
-                    print(f"[debug] echec ecriture morceau {n_chunks} (tentative {attempt+1}): {e}")
-                    await asyncio.sleep(0.2)
-            else:
-                raise RuntimeError(f"Echec d'envoi du morceau {n_chunks} apres 3 tentatives")
-            n_chunks += 1
-            if n_chunks % 10 == 0:
-                print(f"[debug] {i + len(chunk)}/{total} octets envoyes")
-            await asyncio.sleep(0.08)
+        async def send_chunked(payload, label):
+            n = 0
+            total = len(payload)
+            for i in range(0, total, CHUNK_SIZE):
+                chunk = payload[i:i + CHUNK_SIZE]
+                for attempt in range(3):
+                    try:
+                        await client.write_gatt_char(WRITE_CHARACTERISTIC_UUID, chunk, response=False)
+                        break
+                    except Exception as e:
+                        print(f"[debug] [{label}] echec ecriture morceau {n} (tentative {attempt+1}): {e}")
+                        await asyncio.sleep(0.2)
+                else:
+                    raise RuntimeError(f"[{label}] Echec d'envoi du morceau {n} apres 3 tentatives")
+                n += 1
+                await asyncio.sleep(0.02)
+            print(f"[debug] [{label}] {n} morceau(x) envoyes ({total} octets)")
 
-        print(f"[debug] job envoye en {n_chunks} morceaux ({total} octets)")
+        # 1) En-tete texte seul (comme la capture reelle : une ecriture BLE
+        #    dediee, jamais melangee avec les donnees binaires qui suivent).
+        await send_chunked(header, "header")
+
+        # 2) Pause avant les donnees binaires (~0.3s observes dans la capture
+        #    reelle - laisse le temps au firmware de traiter CLS/PRINT/BITMAP).
+        await asyncio.sleep(0.35)
+
+        # 3) Donnees bitmap brutes, decoupees en morceaux de CHUNK_SIZE octets.
+        await send_chunked(data, "bitmap")
+
         await asyncio.sleep(2.5)  # laisse le temps a l'imprimante de traiter/imprimer
 
 
