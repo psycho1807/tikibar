@@ -80,12 +80,15 @@ def build_tspl_header(width_bytes, height_px, width_mm, height_mm, density=10, m
 
 def byte_encode_msb(img_row):
     """Empaquette une ligne de pixels (bool, True = noir) en octets,
-    bit de poids FORT en premier (MSB first, standard TSPL/ESC-POS)."""
+    bit de poids FORT en premier (MSB first). Polarite confirmee par test
+    physique sur cette imprimante : bit=0 -> encre imprimee (noir),
+    bit=1 -> rien imprime (blanc) - c'est l'inverse de la convention TSPL
+    "standard" documentee, mais ce clone fonctionne ainsi."""
     res = bytearray()
     for chunk_start in range(0, len(img_row), 8):
         byte = 0
         for bit_index in range(8):
-            if img_row[chunk_start + bit_index]:
+            if not img_row[chunk_start + bit_index]:
                 byte |= 1 << (7 - bit_index)
         res.append(byte)
     return bytes(res)
