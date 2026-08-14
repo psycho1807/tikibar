@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Tikibar - Admin stock</title>
+<style>
+  :root{
+    --bg:#0a0e14;
+    --card:#141a24;
+    --accent:#ffb347;
+    --accent2:#ff6f61;
+    --text:#f2ede3;
+    --muted:#9aa5b1;
+    --ok:#4caf7d;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:radial-gradient(circle at top, #10182a 0%, #05070c 70%);
+    color:var(--text);
+    padding-bottom:60px;
+  }
+  header{text-align:center; padding:36px 20px 16px;}
+  header h1{
+    font-size:1.8rem;
+    margin:0 0 4px;
+    background:linear-gradient(90deg,var(--accent),var(--accent2));
+    -webkit-background-clip:text;
+    background-clip:text;
+    color:transparent;
+  }
+  header p{color:var(--muted); margin:0; font-size:.9rem;}
+  section{padding:12px 20px;}
+  h2.cat{
+    font-size:1rem;
+    text-transform:uppercase;
+    letter-spacing:.08em;
+    color:var(--accent);
+    margin:24px 0 10px;
+  }
+  .row{
+    background:var(--card);
+    border-radius:14px;
+    padding:12px 16px;
+    margin-bottom:8px;
+    border:1px solid rgba(255,255,255,.05);
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+  }
+  .row .name{font-weight:600; font-size:1rem;}
+  .switch{
+    position:relative;
+    width:52px;
+    height:30px;
+    flex:none;
+  }
+  .switch input{opacity:0; width:0; height:0;}
+  .slider{
+    position:absolute; inset:0;
+    background:#3a3f2e33;
+    background:rgba(255,255,255,.12);
+    border-radius:30px;
+    cursor:pointer;
+    transition:background .15s ease;
+  }
+  .slider::before{
+    content:"";
+    position:absolute;
+    height:24px; width:24px;
+    left:3px; top:3px;
+    background:var(--accent2);
+    border-radius:50%;
+    transition:transform .15s ease, background .15s ease;
+  }
+  .switch input:checked + .slider{background:rgba(76,175,125,.25);}
+  .switch input:checked + .slider::before{
+    transform:translateX(22px);
+    background:var(--ok);
+  }
+  .hint{text-align:center; color:var(--muted); font-size:.82rem; padding:0 20px 6px;}
+  #status{
+    position:fixed; top:0; left:0; right:0;
+    text-align:center;
+    padding:8px;
+    font-size:.85rem;
+    font-weight:600;
+    z-index:10;
+    transform:translateY(-100%);
+    transition:transform .2s ease;
+  }
+  #status.show{transform:translateY(0);}
+  #status.ok{background:var(--ok); color:#04180d;}
+  #status.err{background:var(--accent2); color:#2a0500;}
+  .login-box{
+    max-width:340px;
+    margin:80px auto;
+    padding:0 24px;
+    text-align:center;
+  }
+  .login-box h1{
+    font-size:1.6rem;
+    background:linear-gradient(90deg,var(--accent),var(--accent2));
+    -webkit-background-clip:text;
+    background-clip:text;
+    color:transparent;
+    margin-bottom:20px;
+  }
+  .login-box input{
+    width:100%;
+    padding:14px;
+    border-radius:12px;
+    border:1px solid rgba(255,255,255,.15);
+    background:var(--card);
+    color:var(--text);
+    font-size:1rem;
+    margin-bottom:12px;
+  }
+  .login-box button{
+    width:100%;
+    padding:14px;
+    border-radius:14px;
+    border:none;
+    font-weight:700;
+    background:linear-gradient(90deg,var(--accent),var(--accent2));
+    color:#1a0f00;
+    cursor:pointer;
+    font-size:1rem;
+  }
+  .login-box .err-msg{color:var(--accent2); font-size:.85rem; margin-top:10px; min-height:1.2em;}
+  #app{display:none;}
+</style>
+</head>
+<body>
+
+<div id="status"></div>
+
+<div class="login-box" id="login-box">
+  <h1>🍹 Admin Tikibar</h1>
+  <input type="password" id="pw-input" placeholder="Mot de passe admin" autocomplete="current-password">
+  <button onclick="login()">Se connecter</button>
+  <div class="err-msg" id="login-err"></div>
+</div>
+
+<div id="app">
+  <header>
+    <h1>Gestion du stock</h1>
+    <p>Décoche une boisson en rupture de stock, elle disparaîtra automatiquement du menu des invités.</p>
+  </header>
+  <p class="hint">Les changements sont enregistrés et synchronisés instantanément sur tous les appareils.</p>
+  <section id="list"></section>
+</div>
+
+<script src="menu.js"></script>
+<script>
+const SECRET_KEY = 'tikibar_admin_secret';
+
+function showStatus(msg, isOk){
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'show ' + (isOk ? 'ok' : 'err');
+  setTimeout(() => { el.className = ''; }, 2500);
+}
+
+async function login(){
+  const pw = document.getElementById('pw-input').value.trim();
+  const errEl = document.getElementById('login-err');
+  errEl.textContent = '';
+  if (!pw) return;
+  const ok = await tryAuth(pw);
+  if (ok) {
+    localStorage.setItem(SECRET_KEY, pw);
+    document.getElementById('login-box').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    loadStock();
+  } else {
+    errEl.textContent = 'Mot de passe incorrect.';
+  }
+}
+
+// Vérifie le mot de passe en tentant un envoi "à blanc" (liste vide n'est PAS
+// envoyée : on fait un GET d'abord pour récupérer l'état actuel, puis on
+// renvoie exactement le même contenu pour valider le mot de passe sans rien changer).
+async function tryAuth(pw){
+  try {
+    const cur = await fetch(STOCK_URL, { cache: 'no-store' }).then(r => r.json());
+    const res = await fetch(STOCK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': pw },
+      body: JSON.stringify({ indisponibles: cur.indisponibles || [] })
+    });
+    return res.ok;
+  } catch (err) {
+    return false;
+  }
+}
+
+let currentIndisponibles = new Set();
+
+async function loadStock(){
+  try {
+    const data = await fetch(STOCK_URL, { cache: 'no-store' }).then(r => r.json());
+    currentIndisponibles = new Set(data.indisponibles || []);
+  } catch (err) {
+    currentIndisponibles = new Set();
+  }
+  renderList();
+}
+
+function renderList(){
+  const listEl = document.getElementById('list');
+  listEl.innerHTML = '';
+  for (const [cat, items] of Object.entries(menu)) {
+    const h2 = document.createElement('h2');
+    h2.className = 'cat';
+    h2.textContent = cat;
+    listEl.appendChild(h2);
+    items.forEach(([name]) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const available = !currentIndisponibles.has(name);
+      row.innerHTML = `
+        <div class="name">${name}</div>
+        <label class="switch">
+          <input type="checkbox" ${available ? 'checked' : ''} data-name="${name}">
+          <span class="slider"></span>
+        </label>`;
+      row.querySelector('input').addEventListener('change', onToggle);
+      listEl.appendChild(row);
+    });
+  }
+}
+
+async function onToggle(e){
+  const name = e.target.dataset.name;
+  if (e.target.checked) {
+    currentIndisponibles.delete(name);
+  } else {
+    currentIndisponibles.add(name);
+  }
+  const pw = localStorage.getItem(SECRET_KEY);
+  try {
+    const res = await fetch(STOCK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': pw },
+      body: JSON.stringify({ indisponibles: Array.from(currentIndisponibles) })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    showStatus('✅ Enregistré', true);
+  } catch (err) {
+    showStatus('❌ Échec de l\'enregistrement, réessaie', false);
+  }
+}
+
+// Auto-login si mot de passe déjà mémorisé sur cet appareil.
+(async () => {
+  const saved = localStorage.getItem(SECRET_KEY);
+  if (saved) {
+    const ok = await tryAuth(saved);
+    if (ok) {
+      document.getElementById('login-box').style.display = 'none';
+      document.getElementById('app').style.display = 'block';
+      loadStock();
+      return;
+    }
+    localStorage.removeItem(SECRET_KEY);
+  }
+})();
+
+document.getElementById('pw-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') login();
+});
+</script>
+</body>
+</html>

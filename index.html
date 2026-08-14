@@ -58,6 +58,18 @@
   }
   .item:active{transform:scale(.97);}
   .item:hover{border-color:rgba(255,179,71,.4);}
+  .item.unavailable{opacity:.4; cursor:not-allowed; position:relative;}
+  .item.unavailable:hover{border-color:rgba(255,255,255,.05);}
+  .item.unavailable:active{transform:none;}
+  .stock-badge{
+    display:inline-block;
+    margin-top:6px;
+    font-size:.75rem;
+    font-weight:700;
+    letter-spacing:.04em;
+    color:var(--accent2);
+    text-transform:uppercase;
+  }
   .item .name{font-weight:600; font-size:1.05rem; display:flex; align-items:center; justify-content:space-between;}
   .item .name::after{content:"→"; color:var(--accent); font-weight:400;}
   .item .desc{color:var(--muted); font-size:.88rem; margin-top:2px;}
@@ -180,58 +192,13 @@
 
 <footer>🌴🌞🦜</footer>
 
+<script src="menu.js"></script>
 <script>
 // ------- CONFIG -------
 // Webhook Home Assistant (via Nabu Casa, joignable depuis n'importe quel réseau).
 // Déclenche l'automation "Tikibar - Commande vers iPhone Psycho" qui notifie
 // l'iPhone de Psycho et tente de lancer le Raccourci "TikibarPrint".
 const PRINT_RELAY_URL = "https://a5ep397zy4zubj4re2yy7dubfztmhbnc.ui.nabu.casa/api/webhook/tikibar-b2aad63d2949dcacbab3a69813d2423e";
-
-const menu = {
-  "Grands classiques": [
-    ["Mojito", "Rhum blanc, sucre de canne, citron vert, menthe, eau gazeuse."],
-    ["Gin tonic", "Gin, tonic, glaçons, zeste de citron ou concombre."],
-    ["Piña colada", "Rhum blanc, jus d'ananas, crème de coco, glace pilée."],
-    ["Margarita", "Tequila, triple sec, jus de citron vert, sel."],
-    ["Moscow mule", "Vodka, ginger beer, citron vert, glaçons."],
-    ["Daiquiri", "Rhum blanc, jus de citron vert, sirop de sucre."],
-    ["Negroni", "Gin, Campari, vermouth rouge, à parts égales."],
-    ["Cosmopolitan", "Vodka, triple sec, jus de cranberry, citron vert."],
-    ["Whisky sour", "Whisky, jus de citron, sirop de sucre, trait d'angostura."],
-    ["St-Germain Spritz", "St-Germain, vin pétillant, eau gazeuse, zeste de citron."],
-    ["Cuba Libre", "Rhum blanc, Coca, citron vert."],
-    ["Dark 'n' Stormy", "Rhum ambré, ginger beer, citron vert."],
-    ["Ti' Punch", "Rhum ambré, sucre de canne, citron vert."],
-    ["Whisky Buck", "Whisky, ginger beer, citron vert."],
-    ["Americano", "Campari, vermouth rouge, eau gazeuse."],
-    ["Campari Spritz", "Campari, vin pétillant, eau gazeuse."],
-    ["Vodka Cranberry", "Vodka, jus de cranberry."],
-    ["Screwdriver", "Vodka, jus de fruits."],
-    ["Rhum Punch tropical", "Rhum ambré, jus d'ananas, jus de cranberry, sirop de sucre."],
-    ["Planteur", "Rhum ambré, jus d'ananas, jus de cranberry, trait d'angostura, sirop de sucre."],
-    ["Tequila Sunrise", "Tequila, jus d'orange, grenadine."],
-    ["Paloma", "Tequila, citron vert, sel, soda pamplemousse."],
-    ["Kir Royal", "Vin pétillant, crème de cassis."]
-  ],
-  "Spiritueux": [
-    ["Whisky", "Servi sec ou sur glaçons, au choix."],
-    ["Rhum", "Blanc ou ambré, avec ou sans glaçons."],
-    ["Vodka", "Pure, avec ou sans glaçons."],
-    ["Vin", "Rouge, blanc ou rosé, au choix."],
-    ["Bière", "Corona, Desperados ou Leffe, au choix."]
-  ],
-  "Softs": [
-    ["Coca", "Coca-Cola bien frais."],
-    ["Red Bull", "Red Bull glacé."],
-    ["Limonade", "Limonade pétillante."],
-    ["Jus de fruits", "Orange, pomme ou ananas."],
-    ["Perrier", "Eau gazeuse Perrier, glaçons."]
-  ]
-};
-
-// Seule la categorie "Spiritueux" propose le choix des glacons (whisky, rhum,
-// vodka, vin, biere...) - les cocktails ont deja les glacons dans la recette.
-const GLACONS_CATEGORIES = ["Spiritueux"];
 
 const menuEl = document.getElementById('menu');
 for (const [cat, items] of Object.entries(menu)) {
@@ -242,11 +209,43 @@ for (const [cat, items] of Object.entries(menu)) {
   items.forEach(([name, desc]) => {
     const div = document.createElement('div');
     div.className = 'item';
+    div.dataset.boisson = name;
     div.innerHTML = `<div class="name">${name}</div><div class="desc">${desc}</div>`;
-    div.addEventListener('click', () => openModal(name, cat));
+    div.addEventListener('click', () => {
+      if (div.classList.contains('unavailable')) return;
+      openModal(name, cat);
+    });
     menuEl.appendChild(div);
   });
 }
+
+// ------- Stock : grise les boissons marquees indisponibles par l'admin -------
+async function applyStock(){
+  if (!STOCK_URL) return;
+  try {
+    const res = await fetch(STOCK_URL, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = await res.json();
+    const indisponibles = new Set(data.indisponibles || []);
+    document.querySelectorAll('.item').forEach(div => {
+      const name = div.dataset.boisson;
+      const isOut = indisponibles.has(name);
+      div.classList.toggle('unavailable', isOut);
+      if (isOut && !div.querySelector('.stock-badge')) {
+        const badge = document.createElement('div');
+        badge.className = 'stock-badge';
+        badge.textContent = 'Rupture de stock';
+        div.appendChild(badge);
+      } else if (!isOut) {
+        const badge = div.querySelector('.stock-badge');
+        if (badge) badge.remove();
+      }
+    });
+  } catch (err) {
+    // Pas grave si ca echoue : le menu reste utilisable sans info de stock.
+  }
+}
+applyStock();
 
 document.querySelectorAll('.options').forEach(group => {
   group.addEventListener('click', e => {
