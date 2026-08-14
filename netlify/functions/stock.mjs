@@ -17,14 +17,35 @@ const CORS_HEADERS = {
   "Content-Type": "application/json",
 };
 
-export default async (req, context) => {
-  const HA_URL = Netlify.env.get("HA_URL");
-  const HA_TOKEN = Netlify.env.get("HA_TOKEN");
-  const ADMIN_SECRET = Netlify.env.get("ADMIN_SECRET");
+function getEnv(key) {
+  // process.env fonctionne toujours dans le runtime Node des Netlify
+  // Functions ; le global Netlify.env est une API plus recente, utilisee
+  // en repli si jamais disponible.
+  if (typeof process !== "undefined" && process.env && process.env[key]) {
+    return process.env[key];
+  }
+  if (typeof Netlify !== "undefined" && Netlify.env) {
+    return Netlify.env.get(key);
+  }
+  return undefined;
+}
 
+export default async (req, context) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
   }
+
+  try {
+    return await handle(req);
+  } catch (err) {
+    return json(500, { error: "Erreur interne: " + (err && err.message ? err.message : String(err)) });
+  }
+};
+
+async function handle(req) {
+  const HA_URL = getEnv("HA_URL");
+  const HA_TOKEN = getEnv("HA_TOKEN");
+  const ADMIN_SECRET = getEnv("ADMIN_SECRET");
 
   if (!HA_URL || !HA_TOKEN) {
     return json(500, { error: "Serveur mal configure (HA_URL/HA_TOKEN manquants)." });
@@ -78,7 +99,7 @@ export default async (req, context) => {
   }
 
   return json(405, { error: "Methode non supportee." });
-};
+}
 
 function json(status, obj) {
   return new Response(JSON.stringify(obj), { status, headers: CORS_HEADERS });
