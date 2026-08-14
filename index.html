@@ -166,6 +166,9 @@
       <button class="opt" data-value="Sans glaçons">Sans glaçons</button>
     </div>
 
+    <div class="q">Un mot pour le barman ? (facultatif)</div>
+    <input type="text" id="message-input" class="field-input" placeholder="Ex: pas trop fort, merci !" maxlength="60">
+
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal()">Annuler</button>
       <button class="btn-send" onclick="sendOrder()">Envoyer 🍹</button>
@@ -301,11 +304,13 @@ function closeModal(){
   document.getElementById('overlay').classList.remove('open');
   document.getElementById('print-status').textContent = '';
   document.getElementById('prenom-input').value = '';
+  document.getElementById('message-input').value = '';
   document.querySelectorAll('.opt.selected').forEach(o => o.classList.remove('selected'));
 }
 
 async function sendOrder(){
   const prenom = document.getElementById('prenom-input').value.trim();
+  const message = document.getElementById('message-input').value.trim();
   const lieu = getSelected('lieu');
   const needsGlacons = GLACONS_CATEGORIES.includes(currentCategory);
   const glacons = needsGlacons ? getSelected('glacons') : null;
@@ -332,7 +337,8 @@ async function sendOrder(){
   }
 
   lastOrderText = `🍹 Commande Tikibar\nPrénom : ${prenom}\nLieu : ${lieu}\nBoisson : ${currentBoisson}` +
-    (glacons ? `\nGlaçons : ${glacons}` : '');
+    (glacons ? `\nGlaçons : ${glacons}` : '') +
+    (message ? `\nMot : ${message}` : '');
 
   if (!PRINT_RELAY_URL) {
     statusEl.textContent = "Envoi pas encore configuré (PRINT_RELAY_URL vide).";
@@ -349,6 +355,7 @@ async function sendOrder(){
         lieu,
         boisson: currentBoisson,
         glacons: glacons || '',
+        message: message || '',
         text: lastOrderText,
         ts: new Date().toISOString()
       })

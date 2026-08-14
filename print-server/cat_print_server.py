@@ -107,7 +107,7 @@ def img_to_tspl_bitmap(rows, width_bytes):
 BOTTOM_MARGIN_PX = 460  # ~64mm de blanc en bas (380 ne suffisait pas, +1cm environ manquant)
 
 
-def render_ticket(prenom, lieu, boisson, glacons):
+def render_ticket(prenom, lieu, boisson, glacons, message=""):
     font_big = ImageFont.load_default()
     try:
         font_big = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 26)
@@ -124,6 +124,9 @@ def render_ticket(prenom, lieu, boisson, glacons):
     ]
     if glacons:
         lines.append((f"Glacons: {glacons}", font_small, False))
+    if message:
+        lines.append(("", font_small, False))
+        lines.append((f'"{message}"', font_small, False))
     lines += [
         ("", font_small, False),
         (datetime.now().strftime("%d/%m/%Y %H:%M"), font_small, False),
@@ -264,9 +267,10 @@ def http_print():
     lieu = payload.get("lieu", "?")
     boisson = payload.get("boisson", "?")
     glacons = payload.get("glacons", "")  # vide si non applicable (cocktails, softs...)
+    message = payload.get("message", "")  # mot facultatif pour le barman
 
     try:
-        img = render_ticket(prenom, lieu, boisson, glacons)
+        img = render_ticket(prenom, lieu, boisson, glacons, message)
         asyncio.run(print_ticket_ble(img))
         return jsonify({"ok": True})
     except Exception as e:
