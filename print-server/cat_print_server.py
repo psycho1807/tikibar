@@ -165,11 +165,11 @@ def draw_mixed_line(img, draw, x, y, text, font_text, emoji_font, emoji_native_s
                 continue
             glyph = glyph.resize((EMOJI_PX, EMOJI_PX), Image.LANCZOS)
             gray = glyph.convert("L")
-            img.paste(gray, (cx, y))
+            img.paste(gray, (int(cx), int(y)))
             cx += EMOJI_PX
         else:
             w = draw.textlength(ch, font=font_text)
-            draw.text((cx, y), ch, fill=0, font=font_text)
+            draw.text((int(cx), int(y)), ch, fill=0, font=font_text)
             cx += w
     return cx
 
