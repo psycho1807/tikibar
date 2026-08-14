@@ -107,9 +107,10 @@ def img_to_tspl_bitmap(rows, width_bytes):
 
 BOTTOM_MARGIN_PX = 540  # ~75mm de blanc en bas (460 ne suffisait plus avec le mot en plus, +1cm)
 
-# La police Arial (vectorielle) ne contient pas les emojis (police couleur a
-# part sur macOS) : ils sont simplement ignores/invisibles a l'impression.
-# On les retire proprement du texte pour eviter des trous silencieux.
+# La police Arial (vectorielle) ne contient pas les emojis : ils vivent dans
+# une police couleur a part (Apple Color Emoji sur macOS). On les detecte
+# pour les dessiner via cette police couleur, convertie en noir/blanc, plutot
+# que de les laisser invisibles ou de les retirer.
 EMOJI_PATTERN = re.compile(
     "["
     "\U0001F300-\U0001FAFF"  # symboles/pictogrammes divers, emoji recents
@@ -117,29 +118,60 @@ EMOJI_PATTERN = re.compile(
     "\U0001F1E6-\U0001F1FF"  # drapeaux (indicateurs regionaux)
     "\U00002190-\U000021FF"  # fleches
     "\U00002300-\U000023FF"  # symboles techniques divers (⏰ etc.)
-    "\U0000FE0F"             # variation selector (rendu emoji)
-    "\U0000200D"             # zero-width joiner (emojis composes)
-    "]+",
+    "]",
     flags=re.UNICODE,
 )
+VARIATION_SELECTORS = ("️", "︎", "‍")
+
+EMOJI_FONT_PATH = "/System/Library/Fonts/Apple Color Emoji.ttc"
+EMOJI_PX = 22
 
 
-def strip_emoji(text):
-    return EMOJI_PATTERN.sub("", text or "").strip()
+def _load_emoji_font(size):
+    try:
+        return ImageFont.truetype(EMOJI_FONT_PATH, size)
+    except Exception as e:
+        print(f"[debug] police emoji indisponible, les emojis seront ignores: {e}")
+        return None
+
+
+def draw_mixed_line(img, draw, x, y, text, font_text, emoji_font):
+    """Dessine une ligne pouvant contenir emojis + texte normal, en changeant
+    de police au fil des caracteres. Retourne la position x finale."""
+    cx = x
+    for ch in text:
+        if ch in VARIATION_SELECTORS:
+            continue
+        if EMOJI_PATTERN.match(ch):
+            if emoji_font is None:
+                cx += EMOJI_PX  # garde l'espacement meme si on ne peut pas dessiner
+                continue
+            glyph = Image.new("RGBA", (EMOJI_PX + 4, EMOJI_PX + 4), (255, 255, 255, 255))
+            gdraw = ImageDraw.Draw(glyph)
+            try:
+                gdraw.text((0, 0), ch, font=emoji_font, embedded_color=True)
+            except Exception as e:
+                print(f"[debug] echec rendu emoji {ch!r}: {e}")
+                cx += EMOJI_PX
+                continue
+            gray = glyph.convert("L")
+            img.paste(gray, (cx, y))
+            cx += EMOJI_PX
+        else:
+            w = draw.textlength(ch, font=font_text)
+            draw.text((cx, y), ch, fill=0, font=font_text)
+            cx += w
+    return cx
 
 
 def render_ticket(prenom, lieu, boisson, glacons, message=""):
-    prenom = strip_emoji(prenom)
-    lieu = strip_emoji(lieu)
-    boisson = strip_emoji(boisson)
-    glacons = strip_emoji(glacons)
-    message = strip_emoji(message)
     font_big = ImageFont.load_default()
     try:
         font_big = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 26)
         font_small = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 20)
     except Exception:
         font_small = font_big
+    emoji_font = _load_emoji_font(EMOJI_PX)
 
     lines = [
         ("*** TIKIBAR ***", font_big, True),
@@ -179,10 +211,14 @@ def render_ticket(prenom, lieu, boisson, glacons, message=""):
     y = 10
     for text, font, center in wrapped:
         if text:
-            bbox = draw.textbbox((0, 0), text, font=font)
-            w = bbox[2] - bbox[0]
-            x = (PRINT_WIDTH - w) // 2 if center else 10
-            draw.text((x, y), text, fill=0, font=font)
+            if center:
+                # Ligne decorative fixe (titre), jamais d'emoji attendu ici.
+                bbox = draw.textbbox((0, 0), text, font=font)
+                w = bbox[2] - bbox[0]
+                x = (PRINT_WIDTH - w) // 2
+                draw.text((x, y), text, fill=0, font=font)
+            else:
+                draw_mixed_line(img, draw, 10, y, text, font, emoji_font)
         y += line_height
 
     return img
