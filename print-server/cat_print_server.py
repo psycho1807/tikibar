@@ -125,17 +125,24 @@ VARIATION_SELECTORS = ("️", "︎", "‍")
 
 EMOJI_FONT_PATH = "/System/Library/Fonts/Apple Color Emoji.ttc"
 EMOJI_PX = 22
+# Apple Color Emoji est une police bitmap (sbix) : elle n'accepte que des
+# tailles precises ("strikes"), pas une taille arbitraire. On essaie les
+# tailles connues (les plus courantes sur macOS recent) et on redimensionne
+# ensuite le rendu a la taille voulue pour le ticket.
+EMOJI_FONT_NATIVE_SIZES = [160, 96, 64, 48, 40, 32, 20]
 
 
-def _load_emoji_font(size):
-    try:
-        return ImageFont.truetype(EMOJI_FONT_PATH, size)
-    except Exception as e:
-        print(f"[debug] police emoji indisponible, les emojis seront ignores: {e}")
-        return None
+def _load_emoji_font():
+    for size in EMOJI_FONT_NATIVE_SIZES:
+        try:
+            return ImageFont.truetype(EMOJI_FONT_PATH, size), size
+        except Exception:
+            continue
+    print("[debug] police emoji indisponible (aucune taille geree), les emojis seront ignores")
+    return None, None
 
 
-def draw_mixed_line(img, draw, x, y, text, font_text, emoji_font):
+def draw_mixed_line(img, draw, x, y, text, font_text, emoji_font, emoji_native_size):
     """Dessine une ligne pouvant contenir emojis + texte normal, en changeant
     de police au fil des caracteres. Retourne la position x finale."""
     cx = x
@@ -146,7 +153,9 @@ def draw_mixed_line(img, draw, x, y, text, font_text, emoji_font):
             if emoji_font is None:
                 cx += EMOJI_PX  # garde l'espacement meme si on ne peut pas dessiner
                 continue
-            glyph = Image.new("RGBA", (EMOJI_PX + 4, EMOJI_PX + 4), (255, 255, 255, 255))
+            pad = 4
+            native = emoji_native_size
+            glyph = Image.new("RGBA", (native + pad, native + pad), (255, 255, 255, 255))
             gdraw = ImageDraw.Draw(glyph)
             try:
                 gdraw.text((0, 0), ch, font=emoji_font, embedded_color=True)
@@ -154,6 +163,7 @@ def draw_mixed_line(img, draw, x, y, text, font_text, emoji_font):
                 print(f"[debug] echec rendu emoji {ch!r}: {e}")
                 cx += EMOJI_PX
                 continue
+            glyph = glyph.resize((EMOJI_PX, EMOJI_PX), Image.LANCZOS)
             gray = glyph.convert("L")
             img.paste(gray, (cx, y))
             cx += EMOJI_PX
@@ -171,7 +181,7 @@ def render_ticket(prenom, lieu, boisson, glacons, message=""):
         font_small = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 20)
     except Exception:
         font_small = font_big
-    emoji_font = _load_emoji_font(EMOJI_PX)
+    emoji_font, emoji_native_size = _load_emoji_font()
 
     lines = [
         ("*** TIKIBAR ***", font_big, True),
@@ -218,7 +228,7 @@ def render_ticket(prenom, lieu, boisson, glacons, message=""):
                 x = (PRINT_WIDTH - w) // 2
                 draw.text((x, y), text, fill=0, font=font)
             else:
-                draw_mixed_line(img, draw, 10, y, text, font, emoji_font)
+                draw_mixed_line(img, draw, 10, y, text, font, emoji_font, emoji_native_size)
         y += line_height
 
     return img
