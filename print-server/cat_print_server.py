@@ -104,7 +104,7 @@ def img_to_tspl_bitmap(rows, width_bytes):
 # ---- Rendu du ticket texte -> image monochrome 384px ----
 
 
-BOTTOM_MARGIN_PX = 460  # ~64mm de blanc en bas (380 ne suffisait pas, +1cm environ manquant)
+BOTTOM_MARGIN_PX = 540  # ~75mm de blanc en bas (460 ne suffisait plus avec le mot en plus, +1cm)
 
 
 def render_ticket(prenom, lieu, boisson, glacons, message=""):
