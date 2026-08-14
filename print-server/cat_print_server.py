@@ -28,6 +28,7 @@ Lancement :
 """
 
 import asyncio
+import re
 import textwrap
 from datetime import datetime
 
@@ -106,8 +107,33 @@ def img_to_tspl_bitmap(rows, width_bytes):
 
 BOTTOM_MARGIN_PX = 540  # ~75mm de blanc en bas (460 ne suffisait plus avec le mot en plus, +1cm)
 
+# La police Arial (vectorielle) ne contient pas les emojis (police couleur a
+# part sur macOS) : ils sont simplement ignores/invisibles a l'impression.
+# On les retire proprement du texte pour eviter des trous silencieux.
+EMOJI_PATTERN = re.compile(
+    "["
+    "\U0001F300-\U0001FAFF"  # symboles/pictogrammes divers, emoji recents
+    "\U00002600-\U000027BF"  # symboles divers, dingbats
+    "\U0001F1E6-\U0001F1FF"  # drapeaux (indicateurs regionaux)
+    "\U00002190-\U000021FF"  # fleches
+    "\U00002300-\U000023FF"  # symboles techniques divers (⏰ etc.)
+    "\U0000FE0F"             # variation selector (rendu emoji)
+    "\U0000200D"             # zero-width joiner (emojis composes)
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def strip_emoji(text):
+    return EMOJI_PATTERN.sub("", text or "").strip()
+
 
 def render_ticket(prenom, lieu, boisson, glacons, message=""):
+    prenom = strip_emoji(prenom)
+    lieu = strip_emoji(lieu)
+    boisson = strip_emoji(boisson)
+    glacons = strip_emoji(glacons)
+    message = strip_emoji(message)
     font_big = ImageFont.load_default()
     try:
         font_big = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 26)
