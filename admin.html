@@ -53,6 +53,7 @@
     gap:12px;
   }
   .row .name{font-weight:600; font-size:1rem;}
+  .row .uses{color:var(--muted); font-size:.78rem; margin-top:2px; max-width:230px;}
   .switch{
     position:relative;
     width:52px;
@@ -211,36 +212,52 @@ async function loadStock(){
   renderList();
 }
 
+// Calcule, pour chaque ingredient, la liste des noms de cocktails qui en
+// dependent (affiche en petit sous chaque interrupteur).
+function cocktailsUsing(ingredientKey){
+  const names = [];
+  for (const items of Object.values(menu)) {
+    items.forEach(([name, , ingredients]) => {
+      if ((ingredients || []).includes(ingredientKey)) names.push(name);
+    });
+  }
+  return names;
+}
+
 function renderList(){
   const listEl = document.getElementById('list');
   listEl.innerHTML = '';
-  for (const [cat, items] of Object.entries(menu)) {
+  for (const [group, ingredients] of Object.entries(INGREDIENTS)) {
     const h2 = document.createElement('h2');
     h2.className = 'cat';
-    h2.textContent = cat;
+    h2.textContent = group;
     listEl.appendChild(h2);
-    items.forEach(([name]) => {
+    for (const [key, label] of Object.entries(ingredients)) {
       const row = document.createElement('div');
       row.className = 'row';
-      const available = !currentIndisponibles.has(name);
+      const available = !currentIndisponibles.has(key);
+      const used = cocktailsUsing(key);
       row.innerHTML = `
-        <div class="name">${name}</div>
+        <div>
+          <div class="name">${label}</div>
+          ${used.length ? `<div class="uses">${used.join(', ')}</div>` : ''}
+        </div>
         <label class="switch">
-          <input type="checkbox" ${available ? 'checked' : ''} data-name="${name}">
+          <input type="checkbox" ${available ? 'checked' : ''} data-key="${key}">
           <span class="slider"></span>
         </label>`;
       row.querySelector('input').addEventListener('change', onToggle);
       listEl.appendChild(row);
-    });
+    }
   }
 }
 
 async function onToggle(e){
-  const name = e.target.dataset.name;
+  const key = e.target.dataset.key;
   if (e.target.checked) {
-    currentIndisponibles.delete(name);
+    currentIndisponibles.delete(key);
   } else {
-    currentIndisponibles.add(name);
+    currentIndisponibles.add(key);
   }
   const pw = localStorage.getItem(SECRET_KEY);
   try {

@@ -206,10 +206,11 @@ for (const [cat, items] of Object.entries(menu)) {
   h2.className = 'cat';
   h2.textContent = cat;
   menuEl.appendChild(h2);
-  items.forEach(([name, desc]) => {
+  items.forEach(([name, desc, ingredients]) => {
     const div = document.createElement('div');
     div.className = 'item';
     div.dataset.boisson = name;
+    div.dataset.ingredients = (ingredients || []).join(',');
     div.innerHTML = `<div class="name">${name}</div><div class="desc">${desc}</div>`;
     div.addEventListener('click', () => {
       if (div.classList.contains('unavailable')) return;
@@ -219,7 +220,7 @@ for (const [cat, items] of Object.entries(menu)) {
   });
 }
 
-// ------- Stock : grise les boissons marquees indisponibles par l'admin -------
+// ------- Stock : grise les cocktails dont un ingredient manque -------
 async function applyStock(){
   if (!STOCK_URL) return;
   try {
@@ -228,17 +229,20 @@ async function applyStock(){
     const data = await res.json();
     const indisponibles = new Set(data.indisponibles || []);
     document.querySelectorAll('.item').forEach(div => {
-      const name = div.dataset.boisson;
-      const isOut = indisponibles.has(name);
+      const ingredients = div.dataset.ingredients ? div.dataset.ingredients.split(',') : [];
+      const missing = ingredients.find(ing => indisponibles.has(ing));
+      const isOut = !!missing;
       div.classList.toggle('unavailable', isOut);
-      if (isOut && !div.querySelector('.stock-badge')) {
-        const badge = document.createElement('div');
-        badge.className = 'stock-badge';
+      let badge = div.querySelector('.stock-badge');
+      if (isOut) {
+        if (!badge) {
+          badge = document.createElement('div');
+          badge.className = 'stock-badge';
+          div.appendChild(badge);
+        }
         badge.textContent = 'Rupture de stock';
-        div.appendChild(badge);
-      } else if (!isOut) {
-        const badge = div.querySelector('.stock-badge');
-        if (badge) badge.remove();
+      } else if (badge) {
+        badge.remove();
       }
     });
   } catch (err) {
