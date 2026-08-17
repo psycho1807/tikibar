@@ -152,6 +152,20 @@
     <h1>Gestion du stock</h1>
     <p>Décoche une boisson en rupture de stock, elle disparaîtra automatiquement du menu des invités.</p>
   </header>
+
+  <section style="padding-top:0;">
+    <div class="row" id="open-row" style="border:1px solid rgba(255,255,255,.12);">
+      <div>
+        <div class="name" id="open-label">Bar ouvert</div>
+        <div class="uses" id="open-sub">Les invités peuvent commander</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="open-toggle" checked>
+        <span class="slider"></span>
+      </label>
+    </div>
+  </section>
+
   <p class="hint">Les changements sont enregistrés et synchronisés instantanément sur tous les appareils.</p>
   <section id="list"></section>
 </div>
@@ -203,14 +217,46 @@ async function tryAuth(pw){
 let currentIndisponibles = new Set();
 
 async function loadStock(){
+  let ouvert = true;
   try {
     const data = await fetch(STOCK_URL, { cache: 'no-store' }).then(r => r.json());
     currentIndisponibles = new Set(data.indisponibles || []);
+    ouvert = data.ouvert !== false;
   } catch (err) {
     currentIndisponibles = new Set();
   }
   renderList();
+  setOpenUI(ouvert);
 }
+
+function setOpenUI(ouvert){
+  document.getElementById('open-toggle').checked = ouvert;
+  document.getElementById('open-label').textContent = ouvert ? 'Bar ouvert' : 'Bar fermé';
+  document.getElementById('open-sub').textContent = ouvert
+    ? 'Les invités peuvent commander'
+    : 'Le menu est bloqué pour les invités';
+  document.getElementById('open-row').style.borderColor = ouvert
+    ? 'rgba(76,175,125,.5)'
+    : 'rgba(255,111,97,.5)';
+}
+
+async function onToggleOpen(e){
+  const ouvert = e.target.checked;
+  setOpenUI(ouvert);
+  const pw = localStorage.getItem(SECRET_KEY);
+  try {
+    const res = await fetch(STOCK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Secret': pw },
+      body: JSON.stringify({ ouvert })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    showStatus(ouvert ? '✅ Bar ouvert' : '✅ Bar fermé', true);
+  } catch (err) {
+    showStatus('❌ Échec de l\'enregistrement, réessaie', false);
+  }
+}
+document.getElementById('open-toggle').addEventListener('change', onToggleOpen);
 
 // Calcule, pour chaque ingredient, la liste des noms de cocktails qui en
 // dependent (affiche en petit sous chaque interrupteur).

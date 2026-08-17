@@ -9,6 +9,7 @@
 // doivent pouvoir appeler cette fonction.
 
 const ENTITY_ID = "input_text.tikibar_indisponibles";
+const OPEN_ENTITY_ID = "input_boolean.tikibar_ouvert";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -53,16 +54,28 @@ async function handle(req) {
 
   if (req.method === "GET") {
     try {
-      const r = await fetch(`${HA_URL}/api/states/${ENTITY_ID}`, {
-        headers: { Authorization: `Bearer ${HA_TOKEN}` },
-      });
-      if (!r.ok) throw new Error("HA HTTP " + r.status);
-      const data = await r.json();
-      const indisponibles = (data.state || "")
+      const [stockRes, openRes] = await Promise.all([
+        fetch(`${HA_URL}/api/states/${ENTITY_ID}`, {
+          headers: { Authorization: `Bearer ${HA_TOKEN}` },
+        }),
+        fetch(`${HA_URL}/api/states/${OPEN_ENTITY_ID}`, {
+          headers: { Authorization: `Bearer ${HA_TOKEN}` },
+        }),
+      ]);
+      if (!stockRes.ok) throw new Error("HA HTTP " + stockRes.status);
+      const stockData = await stockRes.json();
+      const indisponibles = (stockData.state || "")
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
-      return json(200, { indisponibles });
+
+      let ouvert = true;
+      if (openRes.ok) {
+        const openData = await openRes.json();
+        ouvert = openData.state !== "off";
+      }
+
+      return json(200, { indisponibles, ouvert });
     } catch (err) {
       return json(502, { error: "Impossible de lire le stock depuis Home Assistant." });
     }
@@ -79,20 +92,41 @@ async function handle(req) {
     } catch {
       return json(400, { error: "JSON invalide." });
     }
-    const list = Array.isArray(body.indisponibles) ? body.indisponibles : [];
-    const value = list.map(String).join(",").slice(0, 255);
-
     try {
-      const r = await fetch(`${HA_URL}/api/services/input_text/set_value`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${HA_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ entity_id: ENTITY_ID, value }),
-      });
-      if (!r.ok) throw new Error("HA HTTP " + r.status);
-      return json(200, { ok: true, indisponibles: list });
+      const calls = [];
+
+      if (Array.isArray(body.indisponibles)) {
+        const value = body.indisponibles.map(String).join(",").slice(0, 255);
+        calls.push(
+          fetch(`${HA_URL}/api/services/input_text/set_value`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${HA_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ entity_id: ENTITY_ID, value }),
+          })
+        );
+      }
+
+      if (typeof body.ouvert === "boolean") {
+        const service = body.ouvert ? "turn_on" : "turn_off";
+        calls.push(
+          fetch(`${HA_URL}/api/services/input_boolean/${service}`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${HA_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ entity_id: OPEN_ENTITY_ID }),
+          })
+        );
+      }
+
+      const results = await Promise.all(calls);
+      if (results.some((r) => !r.ok)) throw new Error("HA call failed");
+
+      return json(200, { ok: true });
     } catch (err) {
       return json(502, { error: "Impossible de mettre a jour Home Assistant." });
     }

@@ -58,6 +58,7 @@
   }
   .item:active{transform:scale(.97);}
   .item:hover{border-color:rgba(255,179,71,.4);}
+  #menu.bar-closed .item{opacity:.35; cursor:not-allowed; pointer-events:none;}
   .item.unavailable{opacity:.4; cursor:not-allowed; position:relative;}
   .item.unavailable:hover{border-color:rgba(255,255,255,.05);}
   .item.unavailable:active{transform:none;}
@@ -152,7 +153,10 @@
   <p>Cocktails d'exception, maîtrisés par Psycho<br>(si Psycho plus étanche, Alfred prend la suite)</p>
 </header>
 
-<p class="hint">👉 Touche un cocktail pour le commander</p>
+<p class="hint" id="hint">👉 Touche un cocktail pour le commander</p>
+<div id="closed-banner" style="display:none; margin:0 20px 20px; padding:14px 16px; border-radius:14px; background:rgba(255,111,97,.15); border:1px solid rgba(255,111,97,.4); color:var(--accent2); text-align:center; font-weight:600;">
+  🔒 Le bar est fermé pour le moment, reviens plus tard !
+</div>
 
 <section id="menu"></section>
 
@@ -213,7 +217,7 @@ for (const [cat, items] of Object.entries(menu)) {
     div.dataset.ingredients = (ingredients || []).join(',');
     div.innerHTML = `<div class="name">${name}</div><div class="desc">${desc}</div>`;
     div.addEventListener('click', () => {
-      if (div.classList.contains('unavailable')) return;
+      if (!barOuvert || div.classList.contains('unavailable')) return;
       openModal(name, cat);
     });
     menuEl.appendChild(div);
@@ -221,6 +225,8 @@ for (const [cat, items] of Object.entries(menu)) {
 }
 
 // ------- Stock : grise les cocktails dont un ingredient manque -------
+let barOuvert = true;
+
 async function applyStock(){
   if (!STOCK_URL) return;
   try {
@@ -228,6 +234,12 @@ async function applyStock(){
     if (!res.ok) return;
     const data = await res.json();
     const indisponibles = new Set(data.indisponibles || []);
+    barOuvert = data.ouvert !== false;
+
+    document.getElementById('closed-banner').style.display = barOuvert ? 'none' : 'block';
+    document.getElementById('hint').style.display = barOuvert ? '' : 'none';
+    document.getElementById('menu').classList.toggle('bar-closed', !barOuvert);
+
     document.querySelectorAll('.item').forEach(div => {
       const ingredients = div.dataset.ingredients ? div.dataset.ingredients.split(',') : [];
       const missing = ingredients.find(ing => indisponibles.has(ing));
@@ -250,6 +262,7 @@ async function applyStock(){
   }
 }
 applyStock();
+setInterval(applyStock, 30000);
 
 document.querySelectorAll('.options').forEach(group => {
   group.addEventListener('click', e => {
@@ -319,6 +332,10 @@ async function sendOrder(){
   const glacons = needsGlacons ? getSelected('glacons') : null;
   const statusEl = document.getElementById('print-status');
 
+  if (!barOuvert) {
+    statusEl.textContent = "🔒 Le bar est fermé pour le moment.";
+    return;
+  }
   if (!prenom) {
     alert("Indique ton prénom 🙏");
     return;
