@@ -155,7 +155,7 @@
 
 <p class="hint" id="hint">👉 Touche un cocktail pour le commander</p>
 <div id="closed-banner" style="display:none; margin:0 20px 20px; padding:14px 16px; border-radius:14px; background:rgba(255,111,97,.15); border:1px solid rgba(255,111,97,.4); color:var(--accent2); text-align:center; font-weight:600;">
-  🔒 Le bar est fermé pour le moment, reviens plus tard !
+  🔒 Le bar est fermé jusqu'à la prochaine soirée !
 </div>
 
 <section id="menu"></section>
@@ -333,7 +333,7 @@ async function sendOrder(){
   const statusEl = document.getElementById('print-status');
 
   if (!barOuvert) {
-    statusEl.textContent = "🔒 Le bar est fermé pour le moment.";
+    statusEl.textContent = "🔒 Le bar est fermé jusqu'à la prochaine soirée.";
     return;
   }
   if (!prenom) {
